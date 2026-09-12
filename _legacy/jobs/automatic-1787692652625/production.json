@@ -1,0 +1,74 @@
+{
+  "video_duration_seconds": 1358,
+  "title": "Morty's Place-Saving Device Has a Horrifying Secret",
+  "hashtags": [
+    "#rickandmorty",
+    "#vatofacid",
+    "#morty",
+    "#rick",
+    "#animerecap",
+    "#scifi"
+  ],
+  "youtube_tags": [
+    "rick and morty",
+    "vat of acid episode",
+    "morty place saving device",
+    "rick and morty reaction",
+    "rick and morty highlights",
+    "rick and morty recap",
+    "the prestige morty",
+    "rick and morty clips",
+    "rick and morty best moments",
+    "scifi comedy",
+    "adult swim",
+    "rick tricking morty"
+  ],
+  "cuts": [
+    {
+      "start_seconds": 466,
+      "end_seconds": 484,
+      "voiceover_text": "Morty thinks he came up with the ultimate video game invention: a place-saving device for real life. To prove it works, Rick pulls out a gun and shoots him point-blank in the chest. A second later, Morty respawns completely unharmed and holding the remote. He is terrified, then utterly thrilled.",
+      "keywords": [
+        {
+          "word": "horrifying",
+          "color": "#FF3333"
+        },
+        {
+          "word": "thrilled",
+          "color": "#00FFCC"
+        }
+      ]
+    },
+    {
+      "start_seconds": 957,
+      "end_seconds": 1011,
+      "voiceover_text": "After Morty spends weeks carelessly abusing the place-saving remote to avoid accountability, Rick summons him into the garage late at night to deliver a soul-crushing revelation. Rick explicitly explains that he despises time travel, so he never built a true time machine. Every single time Morty pressed the reset button to replay an awkward conversation, try a second attempt, or fix a minor mistake, he was not undoing history. Instead, the device isolated his timeline, split his probable self, and shunted him into an equally probable parallel reality. To make room for him in that new dimension, the machine instantly disintegrates and replaces the innocent Morty already living there. Staring around the room in absolute horror, Morty watches pink holographic ghost visions of his alternate selves burning to ashes in front of his eyes. Every single reset was actually a secret assassination. He is completely devastated, horrified, and sickened by the unbearable truth of his unintentional killing spree.",
+      "keywords": [
+        {
+          "word": "revelation",
+          "color": "#FF9900"
+        },
+        {
+          "word": "horror",
+          "color": "#FF0000"
+        }
+      ]
+    },
+    {
+      "start_seconds": 1094,
+      "end_seconds": 1123,
+      "voiceover_text": "Because of Morty's relentless dimension-hopping spree across parallel timelines, an enraged mob of SWAT teams, federal agents, drug dealers, and protest groups surrounds the garage to bring him to justice. Rick casually stands back and tells Morty that there is no scientific miracle left to save him. Desperate and terrified of facing a lifetime in prison, Morty is forced to surrender his pride, dive headfirst into Rick's fake vat of acid, and humbly admit that Rick's acid plan was absolute genius from the start.",
+      "keywords": [
+        {
+          "word": "enraged",
+          "color": "#FF0000"
+        },
+        {
+          "word": "genius",
+          "color": "#00FF00"
+        }
+      ]
+    }
+  ],
+  "target_total_duration_seconds": 60
+}

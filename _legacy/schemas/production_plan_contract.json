@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "description": "ClipForge production.json compatibility contract shared by manual browser import and Automatic Mode runner validation. Unknown fields remain allowed for backward compatibility.",
+  "top_level": {
+    "must_be_object": true,
+    "allow_unknown_properties": true
+  },
+  "title": {
+    "optional": true,
+    "type": "nonempty_string"
+  },
+  "scalar_fields": {
+    "video_duration_seconds": {
+      "type": "positive_integer",
+      "required": true
+    },
+    "target_total_duration_seconds": {
+      "type": "positive_integer",
+      "required": true
+    }
+  },
+  "series": {
+    "optional": true,
+    "id_field": "series_id",
+    "part_field": "series_part",
+    "start_field": "series_start_seconds",
+    "end_field": "series_end_seconds",
+    "final_field": "series_final",
+    "summary_field": "series_summary",
+    "summary_max_length": 1200
+  },
+  "string_arrays": {
+    "hashtags": {
+      "optional": true,
+      "minimum_items": 5,
+      "maximum_items": 8,
+      "entry_type": "nonempty_string",
+      "case_insensitive_unique": true,
+      "require_prefix": "#",
+      "forbid_whitespace": true
+    },
+    "youtube_tags": {
+      "optional": true,
+      "minimum_items": 10,
+      "maximum_items": 20,
+      "entry_type": "nonempty_string",
+      "case_insensitive_unique": true,
+      "forbid_prefix": "#",
+      "forbid_substring": ","
+    }
+  },
+  "cuts": {
+    "required": true,
+    "minimum_items": 1,
+    "entry_must_be_object": true,
+    "start_field": "start_seconds",
+    "end_field": "end_seconds",
+    "time_type": "integer",
+    "start_minimum": 0,
+    "end_must_be_after_start": true,
+    "end_must_not_exceed": "video_duration_seconds",
+    "strictly_sorted_non_overlapping": true,
+    "voiceover_field": "voiceover_text",
+    "legacy_voiceover_field": "raw_narration",
+    "voiceover_type": "nonempty_string"
+  }
+}

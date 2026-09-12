@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clipforge.dev/schemas/stage_a_request.schema.json",
+  "title": "ClipForge jobs/<job_id>/stage-a-request.json",
+  "description": "Durable record of the user's source and options, written by the bot before Stage A dispatch and re-read on every restart. See ARCHITECTURE.md §7.1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "job_id", "source", "options", "mode", "series", "music", "saved_at_epoch"],
+  "properties": {
+    "version": { "type": "integer", "const": 2 },
+    "job_id":  { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[A-Za-z0-9._-]+$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["url", "drive", "magnet", "torrent_file", "telegram_channel", "telegram_relay"]
+        },
+        "value": { "type": "string" },
+        "relay": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "release_tag":         { "type": "string" },
+            "expected_size_bytes": { "type": ["integer", "string"] },
+            "sha256":              { "type": "string" }
+          }
+        },
+        "torrent_file_index": { "type": ["integer", "string"] }
+      }
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["whisper_model", "language", "target_duration_seconds", "focus", "enable_vision_assist"],
+      "properties": {
+        "whisper_model":           { "type": "string", "enum": ["tiny", "base", "small"] },
+        "language":                { "type": "string", "description": "Source-language hint for faster-whisper; \"auto\" (the default) = auto-detect. Forced to auto-detect whenever task is translate_to_english (bug-65)." },
+        "task":                    { "type": "string", "enum": ["transcribe", "translate_to_english"], "default": "translate_to_english", "description": "bug-65: default auto-translates any non-English audio to English (faster-whisper task=translate, language auto-detected). \"transcribe\" explicitly preserves the original language." },
+        "target_duration_seconds": { "type": "integer", "minimum": 1 },
+        "focus":                   { "type": "string" },
+        "enable_vision_assist":    { "type": "boolean" }
+      }
+    },
+    "mode": { "type": "string", "enum": ["manual"] },
+    "series": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "series_id", "source_job_id", "part", "start_seconds", "context"],
+      "properties": {
+        "enabled":       { "type": "boolean" },
+        "series_id":     { "type": "string" },
+        "source_job_id": { "type": "string" },
+        "part":          { "type": "integer", "minimum": 0 },
+        "start_seconds": { "type": "integer", "minimum": 0 },
+        "context":       { "type": "string", "maxLength": 8000 }
+      }
+    },
+    "music": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "source"],
+      "properties": {
+        "ref":    { "type": "string" },
+        "source": { "type": "string", "enum": ["none", "default", "explicit_library", "job_upload"] }
+      }
+    },
+    "saved_at_epoch": { "type": "integer", "minimum": 0 }
+  }
+}

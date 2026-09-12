@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clipforge.dev/schemas/analysis_bundle.schema.json",
+  "title": "ClipForge analysis bundle manifest.json",
+  "description": "Machine-readable index of the Stage A analysis bundle release assets. See ARCHITECTURE.md §7.2. Each entry names an asset that Stage A publishes to release clipforge-<job_id>.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "job_id", "release_tag", "assets"],
+  "properties": {
+    "version":     { "type": "integer", "const": 1 },
+    "job_id":      { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[A-Za-z0-9._-]+$" },
+    "release_tag": { "type": "string", "minLength": 1 },
+    "created_at_epoch": { "type": "integer", "minimum": 0 },
+    "assets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "purpose"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "source_input.bin",
+              "transcript.json",
+              "screenshots.zip",
+              "event_composites.zip",
+              "scene_index.json",
+              "key_moments.json",
+              "00_READ_THIS_FIRST.txt",
+              "manifest.json"
+            ]
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "source_full_quality",
+              "transcript",
+              "baseline_composites",
+              "dense_event_composites",
+              "shot_boundaries",
+              "key_moments",
+              "agent_prompt",
+              "self_manifest"
+            ]
+          },
+          "size_bytes":  { "type": "integer", "minimum": 0 },
+          "sha256":      { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "url":         { "type": "string" },
+          "optional":    { "type": "boolean", "description": "true for assets that may be absent depending on options (e.g. event_composites.zip when vision assist is off)" }
+        }
+      }
+    }
+  }
+}

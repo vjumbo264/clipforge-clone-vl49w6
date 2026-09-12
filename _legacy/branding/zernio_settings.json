@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "enabled": true,
+  "auto_publish": true,
+  "automatic_mode": "publish_now",
+  "target_accounts": {
+    "tiktok": [
+      "6a89d0da77555aae01674321",
+      "6a8cff1e77555aae012e87b3",
+      "6a23f25a2b2567671af5f0f7"
+    ],
+    "youtube": [
+      "6a89d06a77555aae01671ca2",
+      "6a8cff4277555aae012e8a8d",
+      "6a8e09b877555aae01785097"
+    ]
+  },
+  "smart_schedule": {
+    "timezone": "UTC",
+    "interval_hours": 24,
+    "preferred_time": "19:30",
+    "queue_depth": 10,
+    "start_mode": "next_available",
+    "custom_start": ""
+  },
+  "updated_at_epoch": 1787693886
+}

@@ -1,0 +1,1165 @@
+name: Stage A — Ingest, Transcribe, Screenshot
+
+# Keyed by the job id when one is supplied so runs are easy to tell apart
+# in the Actions tab and so the site can match a run to its task by title.
+# Blank (auto-generated id) dispatches read as "Stage A — auto".
+run-name: Stage A — ${{ github.event.inputs.job_id || 'auto' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Public video URL, Google Drive share link, BitTorrent magnet URI, or path:jobs/<JOB_ID>/source.torrent uploaded by the site"
+        required: true
+        type: string
+      source_type:
+        description: "url for existing inputs or telegram_bot_forward for a trusted temporary relay asset."
+        required: false
+        type: string
+        default: "url"
+      relay_release_tag:
+        description: "Temporary private relay release tag; used only with telegram_bot_forward."
+        required: false
+        type: string
+        default: ""
+      relay_expected_size:
+        description: "Expected temporary relay asset size in bytes."
+        required: false
+        type: string
+        default: ""
+      relay_sha256:
+        description: "Expected SHA-256 of temporary relay asset."
+        required: false
+        type: string
+        default: ""
+      torrent_file_index:
+        description: "Required only for site-uploaded torrents: the explicit 1-based video entry index selected in the UI."
+        required: false
+        type: string
+        default: ""
+      job_id:
+        description: "Job id (short slug). Leave blank to auto-generate."
+        required: false
+        type: string
+        default: ""
+      whisper_model:
+        description: "faster-whisper model size (CPU): tiny | base | small"
+        required: false
+        type: string
+        default: "base"
+      language:
+        description: "Language hint for transcription (or 'auto')"
+        required: false
+        type: string
+        default: "auto"
+      target_duration_seconds:
+        description: "Target total duration (seconds) of the final cut video the downstream agent should aim for."
+        required: false
+        type: string
+        default: "120"
+      focus:
+        description: "Optional: narrow analysis to one specific scene/moment/plot thread (e.g. 'the confrontation between X and Y'). Leave blank to consider the whole video."
+        required: false
+        type: string
+        default: ""
+      enable_vision_assist:
+        description: "Run local shot indexing (scene_index + key_moments + dense event composites). Set to 'false' to skip on very long videos."
+        required: false
+        type: string
+        default: "true"
+      automatic_mode:
+        description: "When true, replace only the manual external-agent production.json handoff with bounded direct Gemini API Automatic Mode analysis and then dispatch Stage B. Default false preserves the manual flow."
+        required: false
+        type: string
+        default: "false"
+      series_mode:
+        description: "true only for a sequential Series Mode part"
+        required: false
+        type: string
+        default: ""
+      series_id:
+        description: "Stable series identifier"
+        required: false
+        type: string
+        default: ""
+      series_source_job_id:
+        description: "Part 1 job whose Stage A release assets are reused"
+        required: false
+        type: string
+        default: ""
+      series_part:
+        description: "1-based series part number"
+        required: false
+        type: string
+        default: ""
+      series_start_seconds:
+        description: "First unclaimed source timestamp for this part"
+        required: false
+        type: string
+        default: ""
+      series_context:
+        description: "Private summaries of prior parts"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  # Multi-task isolation: when a job slug is supplied, runs for the SAME
+  # slug serialize (two runs must never write one job folder at once), but
+  # a blank slug must NOT collapse every task into a single shared group —
+  # otherwise Task B would queue behind Task A instead of running
+  # independently in parallel. github.run_id is unique per run, so a blank
+  # slug yields a per-run group (true parallelism) while a named slug
+  # still dedupes per task.
+  group: clipforge-stage-a-${{ github.event.inputs.job_id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  torrent_selection:
+    name: Torrent selection preflight
+    runs-on: ubuntu-latest
+    outputs:
+      stage_a_ready: ${{ steps.preflight.outputs.stage_a_ready }}
+      job_id: ${{ steps.preflight.outputs.job_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install aria2 for bounded magnet metadata preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y aria2
+
+      - name: Re-attach dispatch branch for status persistence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -B "$GITHUB_REF_NAME" "origin/$GITHUB_REF_NAME"
+
+      - name: Validate torrent choice or persist selection substage
+        id: preflight
+        shell: bash
+        env:
+          SOURCE_REF: ${{ github.event.inputs.video_url }}
+        run: |
+          set -euo pipefail
+          jid="${{ github.event.inputs.job_id }}"
+          if [ -z "$jid" ]; then
+            jid="$(date -u +%Y%m%d-%H%M%S)-${GITHUB_RUN_ID}"
+          fi
+          jid="$(echo "$jid" | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
+          echo "job_id=$jid" >> "$GITHUB_OUTPUT"
+
+          source_ref="$SOURCE_REF"
+          if [[ "${source_ref,,}" == magnet:* ]]; then
+            # A magnet URI has no file list until its metadata is retrieved.
+            # This bounded, metadata-only aria2 pass saves the .torrent manifest
+            # but never downloads media or starts seeding. The normal explicit
+            # video-selection flow below then resumes from that local manifest.
+            # Validate the complete URI before making any network request.
+            # The validator accepts only a v1 BTIH, ordinary announce endpoints,
+            # and at most three anonymous HTTP(S) exact-metadata sources.
+            python scripts/magnet_source.py validate "$source_ref" >/dev/null
+            infohash="$(python scripts/magnet_source.py infohash "$source_ref")"
+            metadata_source="$(python scripts/magnet_source.py metadata-source "$source_ref")"
+            metadata_dir="work/magnet_metadata"
+            rm -rf "$metadata_dir"
+            mkdir -p "$metadata_dir"
+
+            if [ -n "$metadata_source" ]; then
+              # `xs` gives an optional direct metadata source. Bind it to the
+              # magnet's BTIH before using it, so a mismatched remote manifest
+              # cannot silently redirect this job to another torrent.
+              curl --fail --location --silent --show-error \
+                --connect-timeout 30 --max-time 90 --retry 2 --retry-delay 2 \
+                --output "$metadata_dir/${infohash}.torrent" \
+                "$metadata_source"
+              magnet_torrent="$metadata_dir/${infohash}.torrent"
+              resolved_infohash="$(python scripts/torrent_source.py infohash "$magnet_torrent")"
+              if [ "$resolved_infohash" != "$infohash" ]; then
+                echo "Exact metadata source does not match the magnet infohash" >&2
+                exit 1
+              fi
+            else
+              # Without an exact source, aria2 retrieves metadata only. This
+              # never requests media payload pieces and stops without seeding.
+              timeout 10m aria2c \
+                --dir="$metadata_dir" \
+                --bt-metadata-only=true \
+                --bt-save-metadata=true \
+                --seed-time=0 \
+                --seed-ratio=0 \
+                --bt-stop-timeout=120 \
+                --connect-timeout=60 \
+                --timeout=60 \
+                --max-tries=1 \
+                --file-allocation=none \
+                "$source_ref"
+              magnet_torrent="$(python scripts/magnet_source.py saved-metadata "$metadata_dir" "$infohash")"
+            fi
+            expected_path="jobs/$jid/source.torrent"
+            mkdir -p "$(dirname "$expected_path")"
+            cp "$magnet_torrent" "$expected_path"
+            python scripts/torrent_source.py inspect "$expected_path" >/dev/null
+            source_ref="path:$expected_path"
+          fi
+
+          if [[ "$source_ref" != path:* ]]; then
+            echo "stage_a_ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          torrent_path="${source_ref#path:}"
+          expected_path="jobs/$jid/source.torrent"
+          if [[ "$torrent_path" != "$expected_path" ]] || [[ ! -f "$torrent_path" ]]; then
+            # Leave malformed manual dispatches to Stage A's existing explicit
+            # missing-manifest validation. Browser-uploaded torrents take the
+            # persistent selection branch below when no choice is supplied.
+            echo "stage_a_ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          selected_index="${{ github.event.inputs.torrent_file_index }}"
+          if [[ "$selected_index" =~ ^[1-9][0-9]*$ ]] && \
+              python scripts/torrent_source.py select-index "$torrent_path" "$selected_index" >/dev/null; then
+            echo "stage_a_ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          selection_path="jobs/$jid/torrent-selection.json"
+          python scripts/write_torrent_selection.py "$torrent_path" "$selection_path" \
+            --job-id "$jid" \
+            --whisper-model "${{ github.event.inputs.whisper_model }}" \
+            --language "${{ github.event.inputs.language }}" \
+            --target-duration-seconds "${{ github.event.inputs.target_duration_seconds }}" \
+            --focus "${{ github.event.inputs.focus }}"
+          python scripts/write_status.py "$jid" "awaiting_torrent_selection" \
+            --message "Choose a video from this torrent to begin Stage A." \
+            --release-tag "clipforge-$jid" \
+            --extra "torrent_selection_path=$selection_path"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash || true
+          git add "$torrent_path" "$selection_path" "jobs/$jid/status.json"
+          git commit -m "clipforge: await torrent video selection for $jid" || true
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push; then pushed=true; break; fi
+            git pull --rebase --autostash || true
+            sleep 2
+          done
+          if [ "$pushed" != "true" ]; then
+            echo "Could not persist torrent selection status" >&2
+            exit 1
+          fi
+          echo "stage_a_ready=false" >> "$GITHUB_OUTPUT"
+
+  stage_a:
+    name: Stage A
+    needs: torrent_selection
+    if: needs.torrent_selection.outputs.stage_a_ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve job id
+        id: jid
+        shell: bash
+        run: |
+          set -euo pipefail
+          jid="${{ needs.torrent_selection.outputs.job_id }}"
+          if [ -z "$jid" ]; then
+            jid="$(date -u +%Y%m%d-%H%M%S)-${GITHUB_RUN_ID}"
+          fi
+          # sanitize
+          jid="$(echo "$jid" | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
+          echo "job_id=$jid" >> "$GITHUB_OUTPUT"
+          echo "release_tag=clipforge-$jid" >> "$GITHUB_OUTPUT"
+          echo "Job id: $jid"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Install ffmpeg
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y ffmpeg aria2
+
+      - name: Verify ffmpeg installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
+      - name: Install Python deps
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Do NOT upgrade setuptools to latest: setuptools >= 81 removed the
+          # bundled `pkg_resources` module that resemble-perth (pulled in by
+          # chatterbox-tts in scripts/requirements.txt) imports at load time.
+          # See the setuptools<81 pin and full explanation in requirements.txt.
+          python -m pip install --upgrade pip wheel "setuptools<81"
+          # Build-time prereqs for pkuseg (see below): numpy headers plus a
+          # modern Cython, both importable in the pkuseg build environment.
+          # chatterbox-tts 0.1.4 requires numpy<1.26.0,>=1.24.0.
+          pip install "numpy>=1.24.0,<1.26.0" cython
+          # pkuseg 0.0.25 (exact pin of chatterbox-tts) has no Python 3.11
+          # wheels, so pip builds it from the sdist. The sdist ships stale
+          # pre-generated .cpp files produced by an old Cython that contain
+          # `#include "longintrepr.h"` — a CPython internal header removed
+          # in Python 3.11 — and pkuseg's setup.py only re-runs cythonize()
+          # when PKG-INFO is absent (i.e. NOT in an sdist), so the stale
+          # sources are compiled verbatim and the build dies with
+          # "fatal error: longintrepr.h: No such file or directory".
+          # Fix: unpack the sdist, delete the stale .cpp files so modern
+          # Cython regenerates them from the .pyx sources, then build with
+          # --no-build-isolation so setup.py's top-level `import numpy`
+          # and the re-cythonization see the packages installed above.
+          workdir="$(mktemp -d)"
+          pip download pkuseg==0.0.25 --no-deps --no-binary :all: \
+            --no-build-isolation -d "$workdir"
+          tar -xzf "$workdir/pkuseg-0.0.25.tar.gz" -C "$workdir"
+          find "$workdir/pkuseg-0.0.25" -name '*.cpp' -delete
+          pip install "$workdir/pkuseg-0.0.25" --no-build-isolation
+          rm -rf "$workdir"
+          pip install -r scripts/requirements.txt
+
+      # ---------------------------------------------------------------
+      # Verify the onnxruntime stack up-front.
+      #
+      # faster-whisper's Silero VAD filter imports `onnxruntime` in the
+      # same process. If that module can't be imported cleanly (NumPy
+      # ABI mismatch, wrong manylinux tag, etc.) transcription fails
+      # with a very misleading
+      #     RuntimeError: Applying the VAD filter requires the onnxruntime package
+      # message — even though onnxruntime WAS installed, it just
+      # wouldn't import at runtime.
+      #
+      # Doing an explicit sanity import here means any future ABI
+      # regression fails LOUDLY with the real traceback, at install
+      # time, before we've spent minutes downloading the source video
+      # and extracting audio only to crash inside transcribe.py.
+      # ---------------------------------------------------------------
+      - name: Verify onnxruntime + faster-whisper VAD stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import sys
+
+          print(f"Python:  {sys.version.split()[0]}")
+
+          import numpy as np
+          print(f"numpy:   {np.__version__}")
+
+          # This is the exact same import that faster-whisper's
+          # SileroVADModel.__init__ does. If it raises here, the run stops
+          # here with a real traceback instead of being re-raised as the
+          # misleading "requires the onnxruntime package" RuntimeError
+          # deep inside faster-whisper later on.
+          import onnxruntime
+          print(f"onnxruntime: {onnxruntime.__version__}")
+
+          import faster_whisper
+          print(f"faster-whisper: {faster_whisper.__version__}")
+
+          # Confirm the VAD asset shipped with faster-whisper is present
+          # and that a session can actually be created against it — this
+          # is what the transcription step will do first when it starts.
+          from faster_whisper.vad import SileroVADModel, get_assets_path
+          import os
+          vad_path = os.path.join(get_assets_path(), "silero_vad.onnx")
+          assert os.path.exists(vad_path), f"missing VAD asset: {vad_path}"
+          SileroVADModel(vad_path)
+          print(f"Silero VAD session: OK ({vad_path})")
+          PY
+
+      - name: Write initial status (stage_a_running)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # workflow_run_id / workflow_run_url are exported here (same as
+          # Stage B) so the site can query GitHub's Actions Jobs API for
+          # live per-step status while Stage A runs.
+          python scripts/write_status.py "${{ steps.jid.outputs.job_id }}" "stage_a_running" \
+            --message "Downloading source video" \
+            --release-tag "${{ steps.jid.outputs.release_tag }}" \
+            --extra "workflow_run_id=${{ github.run_id }}" \
+            --extra "workflow_run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --extra "automatic_mode=${{ github.event.inputs.automatic_mode }}" \
+            --extra "workflow_phase=stage_a"
+
+      - name: Commit initial status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Rebase FIRST: with multiple tasks running concurrently, another
+          # task's status commit (or a site-side upload) may have landed on
+          # origin since checkout. A plain push would then fail
+          # non-fast-forward and this task would silently have NO visible
+          # status for the whole Stage A run (the old code swallowed that
+          # with `|| echo non-fatal`). Retry with rebase so the initial
+          # status — which carries this run's workflow_run_id for live
+          # step tracking — actually reaches origin.
+          git pull --rebase --autostash || true
+          git add "jobs/${{ steps.jid.outputs.job_id }}/status.json"
+          git commit -m "clipforge: init job ${{ steps.jid.outputs.job_id }}" || echo "nothing to commit"
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push; then pushed=true; break; fi
+            echo "initial status push attempt $attempt failed — rebasing and retrying…" >&2
+            git pull --rebase --autostash || true
+            sleep 2
+          done
+          # Still non-fatal as a last resort: the final status commit later
+          # in this same workspace carries this commit along with it.
+          if [ "$pushed" != "true" ]; then
+            echo "WARN: initial status push failed after 3 attempts; the final status commit will carry it." >&2
+          fi
+
+      - name: Reuse original Stage A evidence for a Series Mode continuation
+        if: ${{ github.event.inputs.series_mode == 'true' && github.event.inputs.series_source_job_id != '' && github.event.inputs.series_source_job_id != github.event.inputs.job_id }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          source_job="${{ github.event.inputs.series_source_job_id }}"
+          mkdir -p work/screenshots work/stash
+          gh release download "clipforge-$source_job" --repo "$GITHUB_REPOSITORY" --dir work/series-source \
+            --pattern 'transcript.json' --pattern 'scene_index.json' --pattern 'key_moments.json' \
+            --pattern 'screenshots.zip' --pattern 'original.*'
+          cp work/series-source/transcript.json work/transcript.json
+          cp work/series-source/scene_index.json work/scene_index.json
+          cp work/series-source/key_moments.json work/key_moments.json
+          unzip -q work/series-source/screenshots.zip -d work/screenshots
+          original="$(find work/series-source -maxdepth 1 -type f -name 'original.*' | head -n 1)"
+          test -n "$original"
+          original_name="$(basename "$original")"
+          cp "$original" "work/stash/$original_name"
+          echo "ORIGINAL_ASSET_NAME=$original_name" >> "$GITHUB_ENV"
+          python - <<'PY'
+          import json
+          transcript=json.load(open('work/transcript.json', encoding='utf-8'))
+          duration=int(round(float(transcript.get('duration_seconds') or transcript.get('duration') or 0)))
+          if duration <= 0:
+              duration=max((float(s.get('end', 0)) for s in transcript.get('segments', [])), default=0)
+          if duration <= 0: raise SystemExit('Could not recover source duration from reused transcript.')
+          open('/tmp/series_env', 'w').write(f'DURATION_SECONDS={int(round(duration))}\n')
+          print(f'Reused evidence duration: {duration}')
+          PY
+          cat /tmp/series_env >> "$GITHUB_ENV"
+          echo "SCREENSHOT_COUNT=$(find work/screenshots -type f | wc -l)" >> "$GITHUB_ENV"
+          echo "SHOT_COUNT=$(python -c \"import json; print(json.load(open('work/scene_index.json')).get('shot_count', 0))\")" >> "$GITHUB_ENV"
+          echo "KEY_MOMENT_COUNT=$(python -c \"import json; print(json.load(open('work/key_moments.json')).get('moment_count', 0))\")" >> "$GITHUB_ENV"
+          echo "EVENT_FRAME_COUNT=$(find work/screenshots -name 'event_*' -type f | wc -l)" >> "$GITHUB_ENV"
+          echo "SCREENSHOT_WINDOW_SECONDS=6" >> "$GITHUB_ENV"
+
+      - name: Download source video (private relay, Telegram public post, Drive, uploaded torrent, or magnet-resolved torrent)
+        if: ${{ github.event.inputs.series_mode != 'true' || github.event.inputs.series_source_job_id == '' || github.event.inputs.series_source_job_id == github.event.inputs.job_id }}
+        shell: bash
+        env:
+          SOURCE_REF: ${{ github.event.inputs.video_url }}
+          SOURCE_TYPE: ${{ github.event.inputs.source_type }}
+          RELAY_RELEASE_TAG: ${{ github.event.inputs.relay_release_tag }}
+          RELAY_EXPECTED_SIZE: ${{ github.event.inputs.relay_expected_size }}
+          RELAY_SHA256: ${{ github.event.inputs.relay_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+          # Dedicated user-authorized MTProto media session for public Telegram
+          # channel posts that are too large for Telegram's anonymous web view.
+          # GitHub masks these encrypted secrets; the downloader never logs them.
+          CLIPFORGE_TELEGRAM_API_ID: ${{ secrets.CLIPFORGE_TELEGRAM_API_ID }}
+          CLIPFORGE_TELEGRAM_API_HASH: ${{ secrets.CLIPFORGE_TELEGRAM_API_HASH }}
+          CLIPFORGE_TELEGRAM_SESSION: ${{ secrets.CLIPFORGE_TELEGRAM_SESSION }}
+        run: |
+          set -euo pipefail
+          mkdir -p work
+                    source_ref="$SOURCE_REF"
+
+          if [[ "$SOURCE_TYPE" == "telegram_bot_forward" ]]; then
+            if ! [[ "$RELAY_RELEASE_TAG" =~ ^clipforge-relay-input-[A-Za-z0-9._-]+$ ]]; then
+              echo "Invalid temporary relay release tag" >&2
+              exit 1
+            fi
+            if ! [[ "$RELAY_EXPECTED_SIZE" =~ ^[1-9][0-9]*$ ]] || (( RELAY_EXPECTED_SIZE > 1887436800 )); then
+              echo "Invalid temporary relay source size" >&2
+              exit 1
+            fi
+            if ! [[ "$RELAY_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "Invalid temporary relay source checksum" >&2
+              exit 1
+            fi
+            free_kib="$(df -Pk work | awk 'NR==2 {print $4}')"
+            required_kib="$(( (RELAY_EXPECTED_SIZE * 2) / 1024 + 1048576 ))"
+            if [[ -z "$free_kib" || "$free_kib" -lt "$required_kib" ]]; then
+              echo "Insufficient runner disk space for the private relay source" >&2
+              exit 1
+            fi
+            gh release download "$RELAY_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern source_input.bin --dir work
+            source_file="work/source_input.bin"
+            actual_size="$(stat -c%s "$source_file")"
+            actual_sha="$(sha256sum "$source_file" | awk '{print $1}')"
+            if [[ "$actual_size" != "$RELAY_EXPECTED_SIZE" ]] || [[ "$actual_sha" != "$RELAY_SHA256" ]]; then
+              rm -f "$source_file"
+              echo "Temporary relay source integrity validation failed" >&2
+              exit 1
+            fi
+          elif [[ "$source_ref" == path:* ]]; then
+
+            torrent_path="${source_ref#path:}"
+            # The site only uploads manifests to this job-local path. Reject
+            # any other repository path rather than treating path: as a
+            # generic local-file escape hatch.
+            expected_path="jobs/${{ steps.jid.outputs.job_id }}/source.torrent"
+            if [[ "$torrent_path" != "$expected_path" ]] || [[ ! -f "$torrent_path" ]]; then
+              echo "Invalid or missing job-local torrent manifest" >&2
+              exit 1
+            fi
+
+            # This parses metadata only: no tracker/peer activity occurs until
+            # after path and selected-video validation have succeeded.
+            python scripts/torrent_source.py inspect "$torrent_path"
+            selected_index="${{ github.event.inputs.torrent_file_index }}"
+            if ! [[ "$selected_index" =~ ^[1-9][0-9]*$ ]]; then
+              echo "A valid selected torrent video index is required" >&2
+              exit 1
+            fi
+            # Validate the exact UI choice against this manifest before
+            # initiating any tracker/peer connection, then retain the path for
+            # a post-download identity check.
+            selected_index="$(python scripts/torrent_source.py select-index "$torrent_path" "$selected_index")"
+            selected_path="$(python scripts/torrent_source.py select-path "$torrent_path" "$selected_index")"
+            mkdir -p work/torrent
+            # aria2 retrieves only the selected media entry and immediately
+            # stops seeding. It never downloads unrelated .nfo/text extras.
+            # Hosted runners often see only a handful of peers when the
+            # manifest's original trackers are stale. Keep the selected-file
+            # safety invariant, but make discovery and recovery more
+            # aggressive. These options do not cap download speed; they let
+            # aria2 use DHT, PEX, LPD, more peer slots, and short tracker
+            # retry intervals to find healthy peers sooner.
+            aria2c --dir=work/torrent --select-file="$selected_index" \
+              --file-allocation=none --continue=true --auto-file-renaming=false \
+              --seed-time=0 --max-tries=10 \
+              --enable-dht=true --enable-peer-exchange=true \
+              --bt-enable-lpd=true --bt-max-peers=100 \
+              --bt-request-peer-speed-limit=50K \
+              --bt-tracker-connect-timeout=10 --bt-tracker-timeout=10 \
+              --bt-tracker-interval=30 \
+              --bt-tracker="udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce,udp://exodus.desync.com:6969/announce,udp://tracker.torrent.eu.org:451/announce" \
+              --connect-timeout=30 --timeout=30 "$torrent_path"
+            source_file="$(python scripts/torrent_source.py select-video work/torrent "$selected_path")"
+            echo "Selected torrent video: $source_file"
+          else
+            python scripts/download_drive.py "$source_ref" work/source_input.bin
+            source_file="work/source_input.bin"
+          fi
+
+          # Detect real container from bytes (the host may lie about extension).
+          mime="$(file -b --mime-type "$source_file" || true)"
+          echo "Detected mime: $mime"
+          case "$mime" in
+            video/x-matroska|application/x-matroska) ext="mkv" ;;
+            video/mp4|application/mp4)               ext="mp4" ;;
+            *)
+              # Fall back to ffprobe: if it opens, keep as mkv (most permissive).
+              if ffprobe -v error "$source_file" >/dev/null 2>&1; then
+                ext="mkv"
+              else
+                echo "Downloaded file is not a recognized video container" >&2
+                exit 1
+              fi
+              ;;
+          esac
+          cp "$source_file" "work/original.${ext}"
+          echo "ORIGINAL_PATH=work/original.${ext}" >> "$GITHUB_ENV"
+          ls -lh work/
+
+      - name: Probe duration + build compressed analysis copy (720p, CRF 28)
+        if: ${{ github.event.inputs.series_mode != 'true' || github.event.inputs.series_source_job_id == '' || github.event.inputs.series_source_job_id == github.event.inputs.job_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dur="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$ORIGINAL_PATH")"
+          # round to int seconds
+          dur_int="$(python -c "import sys; print(int(round(float(sys.argv[1]))))" "$dur")"
+          echo "DURATION_SECONDS=$dur_int" >> "$GITHUB_ENV"
+          echo "Duration: $dur ($dur_int s)"
+
+          mkdir -p work/analysis
+          # 720p max, CRF 28, AAC 96k. Filter '-2' keeps aspect ratio + even dims.
+          ffmpeg -y -i "$ORIGINAL_PATH" \
+            -vf "scale='min(1280,iw)':'-2'" \
+            -c:v libx264 -preset veryfast -crf 28 \
+            -c:a aac -b:a 96k \
+            work/analysis/compressed.mp4
+          ls -lh work/analysis/compressed.mp4
+
+      - name: Extract 6-frame composite screenshots (one file per 6s window)
+        if: ${{ github.event.inputs.series_mode != 'true' || github.event.inputs.series_source_job_id == '' || github.event.inputs.series_source_job_id == github.event.inputs.job_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/screenshots work/screenshots_tmp
+
+          # Baseline cadence: one composite JPEG per 6 seconds of source video.
+          # Each composite is a 3x2 tile (3 columns wide, 2 rows tall,
+          # 6 panels total), and the 6 panels come from six DIFFERENT
+          # seconds within a 6-second window — one representative frame per
+          # second, spread across the full 6-second span.
+          #
+          # fps=1 gives one frame per source second; tile=3x2 packs every 6
+          # consecutive seconds into one JPEG; output image N covers source
+          # seconds [N*6, N*6+6). Reading order inside each composite is
+          # English reading order (left-to-right, then top-to-bottom).
+          ffmpeg -y -i work/analysis/compressed.mp4 \
+            -vf "fps=1,scale='min(640,iw)':'-2',tile=3x2:padding=2:margin=2:color=black" \
+            -vsync vfr \
+            -qscale:v 5 \
+            -start_number 0 \
+            "work/screenshots_tmp/grid_%05d.jpg"
+
+          # Rename grid_<seq>.jpg -> frame_<window_start_seconds>.jpg
+          # (zero-padded to 6 digits so files sort chronologically even for
+          # long videos). Window start second = sequence index * 6.
+          shopt -s nullglob
+          for f in work/screenshots_tmp/grid_*.jpg; do
+            base="$(basename "$f" .jpg)"       # e.g. grid_00042
+            seq="${base#grid_}"                # e.g. 00042
+            seq_num="$((10#$seq))"
+            start_sec="$((seq_num * 6))"
+            printf -v padded 'frame_%06d.jpg' "$start_sec"
+            mv "$f" "work/screenshots/$padded"
+          done
+          rmdir work/screenshots_tmp || true
+
+          count="$(ls work/screenshots | wc -l)"
+          echo "SCREENSHOT_COUNT=$count" >> "$GITHUB_ENV"
+          echo "SCREENSHOT_WINDOW_SECONDS=6" >> "$GITHUB_ENV"
+          echo "Extracted $count baseline composite screenshots (6-second windows, 1 frame per second, 3x2 grid)"
+          du -sh work/screenshots || true
+
+      - name: Extract audio for transcription
+        if: ${{ github.event.inputs.series_mode != 'true' || github.event.inputs.series_source_job_id == '' || github.event.inputs.series_source_job_id == github.event.inputs.job_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffmpeg -y -i "$ORIGINAL_PATH" -vn -ac 1 -ar 16000 -c:a pcm_s16le work/audio.wav
+          ls -lh work/audio.wav
+
+      - name: Transcribe with faster-whisper (CPU)
+        if: ${{ github.event.inputs.series_mode != 'true' || github.event.inputs.series_source_job_id == '' || github.event.inputs.series_source_job_id == github.event.inputs.job_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/transcribe.py work/audio.wav work/transcript.json \
+            --model "${{ github.event.inputs.whisper_model }}" \
+            --lang "${{ github.event.inputs.language }}"
+          head -c 400 work/transcript.json; echo
+
+      # ---------------------------------------------------------------
+      # Local vision-assist stack
+      #
+      # These steps replace what used to be pure "let the vision agent
+      # figure it out" work. They run entirely on the runner using
+      # ffmpeg, so they cost zero AI-vision tokens downstream while
+      # dramatically improving scene detection.
+      #
+      # The stack is opt-out (enable_vision_assist=false) but ON by
+      # default. If any step degrades, the scripts write empty-but-
+      # valid indexes and the rest of the pipeline continues.
+      #
+      # NOTE: A local face-clustering ("character identification")
+      # step used to live here. It was removed because its identity
+      # errors (splits, merges, missed brief appearances) were doing
+      # more harm than good. Character identification is now handled
+      # directly by the downstream AI vision agent, which has both
+      # the transcript and the screenshots to work from.
+      # ---------------------------------------------------------------
+
+      - name: Detect shot boundaries (scene_index.json)
+        if: ${{ github.event.inputs.enable_vision_assist != 'false' && (github.event.inputs.series_mode != 'true' || github.event.inputs.series_source_job_id == '' || github.event.inputs.series_source_job_id == github.event.inputs.job_id) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/scene_index.py \
+            work/analysis/compressed.mp4 \
+            "$DURATION_SECONDS" \
+            work/scene_index.json \
+            --threshold 0.35
+          shot_count="$(python -c "import json; print(json.load(open('work/scene_index.json'))['shot_count'])")"
+          echo "SHOT_COUNT=$shot_count" >> "$GITHUB_ENV"
+          echo "Detected $shot_count shot(s)"
+
+      - name: Build key-moments shortlist (key_moments.json)
+        if: ${{ github.event.inputs.enable_vision_assist != 'false' && (github.event.inputs.series_mode != 'true' || github.event.inputs.series_source_job_id == '' || github.event.inputs.series_source_job_id == github.event.inputs.job_id) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/build_key_moments.py \
+            work/scene_index.json \
+            work/transcript.json \
+            work/key_moments.json \
+            --max-moments 60
+          km_count="$(python -c "import json; print(json.load(open('work/key_moments.json'))['moment_count'])")"
+          echo "KEY_MOMENT_COUNT=$km_count" >> "$GITHUB_ENV"
+          echo "Shortlisted $km_count key moment(s)"
+
+      - name: Emit dense event composites for high-signal beats
+        if: ${{ github.event.inputs.enable_vision_assist != 'false' && (github.event.inputs.series_mode != 'true' || github.event.inputs.series_source_job_id == '' || github.event.inputs.series_source_job_id == github.event.inputs.job_id) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Count baseline images before we add event composites so we can
+          # report the delta accurately.
+          before="$(ls work/screenshots | grep -c '^frame_' || true)"
+
+          python scripts/event_frames.py \
+            work/analysis/compressed.mp4 \
+            work/key_moments.json \
+            work/screenshots \
+            --window-seconds 4.0 \
+            --samples 6 \
+            --panel-width 640 \
+            --max-events 30 \
+            --min-priority 0.35
+
+          # Count how many event composites landed.
+          event_count="$(ls work/screenshots | grep -c '^event_' || true)"
+          echo "EVENT_FRAME_COUNT=$event_count" >> "$GITHUB_ENV"
+          echo "Wrote $event_count dense event composite(s) (baseline unchanged: $before)"
+
+      - name: Vision-assist disabled — write empty stubs
+        if: ${{ github.event.inputs.enable_vision_assist == 'false' && (github.event.inputs.series_mode != 'true' || github.event.inputs.series_source_job_id == '' || github.event.inputs.series_source_job_id == github.event.inputs.job_id) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Vision-assist disabled by input; writing empty stub indexes."
+          python -c "
+          import json
+          for path, extra in [
+              ('work/scene_index.json', {'shot_count': 0, 'shots': []}),
+              ('work/key_moments.json', {'moment_count': 0, 'moments': []}),
+          ]:
+              payload = {'video_duration_seconds': ${DURATION_SECONDS}}
+              payload.update(extra)
+              open(path, 'w').write(json.dumps(payload, indent=2))
+          "
+          echo "SHOT_COUNT=0" >> "$GITHUB_ENV"
+          echo "KEY_MOMENT_COUNT=0" >> "$GITHUB_ENV"
+          echo "EVENT_FRAME_COUNT=0" >> "$GITHUB_ENV"
+
+      - name: Generate 00_READ_THIS_FIRST.txt (analysis prompt)
+        shell: bash
+        env:
+          RAW_TARGET: ${{ github.event.inputs.target_duration_seconds }}
+          # Pipe the optional focus string through the environment rather
+          # than interpolating it into the shell command line — the value
+          # is free-form user text that can contain quotes, backticks,
+          # newlines, or `$` characters and would otherwise be a shell
+          # injection footgun.
+          FOCUS_INPUT: ${{ github.event.inputs.focus }}
+          SERIES_CONTEXT_INPUT: ${{ github.event.inputs.series_context }}
+        run: |
+          set -euo pipefail
+          # Sanitize user-supplied target duration; fall back to 120s if
+          # the input is missing or non-numeric / non-positive.
+          raw="${RAW_TARGET:-}"
+          raw="${raw// /}"
+          if [[ "$raw" =~ ^[0-9]+$ ]] && [ "$raw" -gt 0 ]; then
+            target_dur="$raw"
+          else
+            target_dur="120"
+          fi
+          echo "Target output duration (seconds): $target_dur"
+
+          # Normalize the optional focus value. Treat missing / all-whitespace
+          # as "no focus" (whole-video mode). When a focus is provided,
+          # log it verbatim so it's easy to correlate with the generated
+          # prompt in workflow logs.
+          focus_trimmed="$(printf '%s' "${FOCUS_INPUT:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [ -n "$focus_trimmed" ]; then
+            echo "Focus (narrow analysis to): $focus_trimmed"
+          else
+            echo "Focus: (none — whole video considered)"
+          fi
+
+          # Pass free-form focus and series continuity context through env rather
+          # than shell interpolation. Later parts are bounded by the persisted
+          # production.json end timestamp of the previous successful part.
+          series_args=()
+          if [ "${{ github.event.inputs.series_mode }}" = "true" ]; then
+            series_args=(--series-part "${{ github.event.inputs.series_part }}" --series-start-seconds "${{ github.event.inputs.series_start_seconds }}" --series-context-env SERIES_CONTEXT)
+          fi
+          FOCUS="$focus_trimmed" SERIES_CONTEXT="$SERIES_CONTEXT_INPUT" \
+          python scripts/generate_analysis_prompt.py \
+            "$DURATION_SECONDS" "$SCREENSHOT_COUNT" \
+            "work/00_READ_THIS_FIRST.txt" \
+            --target-duration "$target_dur" \
+            --job-id "${{ steps.jid.outputs.job_id }}" \
+            --window-seconds "${SCREENSHOT_WINDOW_SECONDS:-6}" \
+            --shot-count "${SHOT_COUNT:-0}" \
+            --key-moment-count "${KEY_MOMENT_COUNT:-0}" \
+            --event-frame-count "${EVENT_FRAME_COUNT:-0}" \
+            --focus-env FOCUS "${series_args[@]}"
+          head -n 60 work/00_READ_THIS_FIRST.txt
+
+      - name: Zip screenshots (baseline + event composites)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd work
+          (cd screenshots && zip -q -r ../screenshots.zip .)
+          ls -lh screenshots.zip
+
+      - name: Stash ORIGINAL video for Stage B (uploaded as private release asset)
+        shell: bash
+        run: |
+          set -euo pipefail
+          orig_name="original$(echo "$ORIGINAL_PATH" | sed 's/.*\././')"
+          mkdir -p work/stash
+          cp "$ORIGINAL_PATH" "work/stash/$orig_name"
+          echo "ORIGINAL_ASSET_NAME=$orig_name" >> "$GITHUB_ENV"
+          ls -lh "work/stash/$orig_name"
+
+      - name: Create GitHub Release with analysis bundle
+        id: rel
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.jid.outputs.release_tag }}
+          name: "ClipForge job ${{ steps.jid.outputs.job_id }}"
+          body: |
+            ClipForge Stage A output.
+
+            clipforge-job-id: ${{ steps.jid.outputs.job_id }}
+            created_at_epoch: ${{ github.run_id }}
+            stage: awaiting_json_upload
+
+            Assets:
+              - 00_READ_THIS_FIRST.txt   (READ FIRST — cut selection instructions)
+              - transcript.json          (timestamped transcript)
+              - scene_index.json         (locally-computed shot boundaries)
+              - key_moments.json         (locally-ranked shortlist of high-signal moments)
+              - screenshots.zip          (baseline 6s composites + dense event composites)
+              - ${{ env.ORIGINAL_ASSET_NAME }}   (original quality video, used by Stage B)
+
+            Stats:
+              shots detected:           ${{ env.SHOT_COUNT }}
+              key moments shortlisted:  ${{ env.KEY_MOMENT_COUNT }}
+              baseline composites:      ${{ env.SCREENSHOT_COUNT }}
+              dense event composites:   ${{ env.EVENT_FRAME_COUNT }}
+
+            This release is automatically deleted 12 hours after creation.
+          make_latest: "false"
+          prerelease: true
+          files: |
+            work/00_READ_THIS_FIRST.txt
+            work/transcript.json
+            work/scene_index.json
+            work/key_moments.json
+            work/screenshots.zip
+            work/stash/${{ env.ORIGINAL_ASSET_NAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve release asset URLs
+        id: assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.jid.outputs.release_tag }}"
+          repo="${GITHUB_REPOSITORY}"
+          json="$(gh api "repos/${repo}/releases/tags/${tag}")"
+          echo "$json" | python -c '
+          import json, os, sys
+          data = json.load(sys.stdin)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("release_url=" + data.get("html_url", "") + "\n")
+          out = {}
+          for a in data.get("assets", []):
+              out[a["name"]] = a["browser_download_url"]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              for k, v in out.items():
+                  # sanitize key for GH output
+                  key = "asset_" + "".join(c if c.isalnum() else "_" for c in k)
+                  f.write(f"{key}={v}\n")
+              f.write("assets_json=" + json.dumps(out) + "\n")
+          '
+
+      # Manual runs retain this exact release-to-external-agent handoff. The
+      # automatic branch below is opt-in and only replaces this one handoff.
+      - name: Write awaiting_json_upload status
+        if: ${{ github.event.inputs.automatic_mode != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/write_status.py "${{ steps.jid.outputs.job_id }}" "awaiting_json_upload" \
+            --message "Stage A complete. Open the Release, hand it to your agent, then upload production.json to start Stage B." \
+            --release-tag "${{ steps.jid.outputs.release_tag }}" \
+            --release-url "${{ steps.assets.outputs.release_url }}" \
+            --extra "duration_seconds=${DURATION_SECONDS}" \
+            --extra "screenshot_count=${SCREENSHOT_COUNT}" \
+            --extra "event_frame_count=${EVENT_FRAME_COUNT:-0}" \
+            --extra "shot_count=${SHOT_COUNT:-0}" \
+            --extra "key_moment_count=${KEY_MOMENT_COUNT:-0}" \
+            --extra "original_asset_name=${ORIGINAL_ASSET_NAME}"
+
+          # Merge in every asset URL from the release.
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          jid = os.environ["JID"]
+          assets = json.loads(os.environ["ASSETS_JSON"])
+          p = Path(f"jobs/{jid}/status.json")
+          data = json.loads(p.read_text())
+          data.setdefault("assets", {}).update(assets)
+          p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+          PY
+        env:
+          JID: ${{ steps.jid.outputs.job_id }}
+          ASSETS_JSON: ${{ steps.assets.outputs.assets_json }}
+
+      - name: Write automatic_analysis_running status
+        if: ${{ github.event.inputs.automatic_mode == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/write_status.py "${{ steps.jid.outputs.job_id }}" "automatic_analysis_running" \
+            --message "Stage A complete. Automatic Mode is analyzing the released evidence with direct Gemini API native tools." \
+            --release-tag "${{ steps.jid.outputs.release_tag }}" \
+            --release-url "${{ steps.assets.outputs.release_url }}" \
+            --extra "automatic_mode=true" \
+            --extra "automatic_analysis_result=jobs/${{ steps.jid.outputs.job_id }}/automatic_analysis.json"
+
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          jid = os.environ["JID"]
+          assets = json.loads(os.environ["ASSETS_JSON"])
+          p = Path(f"jobs/{jid}/status.json")
+          data = json.loads(p.read_text())
+          data.setdefault("assets", {}).update(assets)
+          p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+          PY
+        env:
+          JID: ${{ steps.jid.outputs.job_id }}
+          ASSETS_JSON: ${{ steps.assets.outputs.assets_json }}
+
+      - name: Commit automatic analysis start status
+        if: ${{ github.event.inputs.automatic_mode == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash || true
+          git add "jobs/${{ steps.jid.outputs.job_id }}/status.json"
+          git commit -m "clipforge: job ${{ steps.jid.outputs.job_id }} automatic analysis running" || echo "nothing to commit"
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push; then pushed=true; break; fi
+            echo "automatic analysis start status push attempt $attempt failed — rebasing and retrying…" >&2
+            git pull --rebase --autostash
+            sleep 2
+          done
+          if [ "$pushed" != "true" ]; then
+            echo "FATAL: could not persist automatic analysis start status." >&2
+            exit 1
+          fi
+
+      - name: Download released analysis assets for Automatic Mode
+        if: ${{ github.event.inputs.automatic_mode == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          rm -rf work/automatic-release
+          mkdir -p work/automatic-release
+          gh release download "${{ steps.jid.outputs.release_tag }}" --repo "$GITHUB_REPOSITORY" \
+            --dir work/automatic-release \
+            --pattern '00_READ_THIS_FIRST.txt' \
+            --pattern 'transcript.json' \
+            --pattern 'scene_index.json' \
+            --pattern 'key_moments.json' \
+            --pattern 'screenshots.zip'
+          for required in 00_READ_THIS_FIRST.txt transcript.json scene_index.json key_moments.json screenshots.zip; do
+            test -s "work/automatic-release/$required"
+          done
+
+      - name: Run bounded Gemini Automatic Mode analysis
+        if: ${{ github.event.inputs.automatic_mode == 'true' }}
+        shell: bash
+        env:
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GEMINI_API_KEYS:-}" ]; then
+            echo "FATAL: GEMINI_API_KEYS is empty. Add a Gemini API key in Repository settings first." >&2
+            exit 2
+          fi
+          # automatic_analysis.py calls the official Google Gen AI SDK directly.
+          # It logs only key indexes, enforces the local evidence-tool policy,
+          # and writes production.json only after the shared contract validates it.
+          python scripts/automatic_analysis.py \
+            --artifacts-dir work/automatic-release \
+            --output "jobs/${{ steps.jid.outputs.job_id }}/production.json" \
+            --result-path "jobs/${{ steps.jid.outputs.job_id }}/automatic_analysis.json"
+
+      - name: Resolve Automatic Mode music selection
+        id: automatic_music
+        if: ${{ github.event.inputs.automatic_mode == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/read_automatic_music.py \
+            "${{ steps.jid.outputs.job_id }}" \
+            "jobs/${{ steps.jid.outputs.job_id }}/automatic_music.json"
+
+      - name: Write automatic Stage B queued status
+        if: ${{ github.event.inputs.automatic_mode == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/write_status.py "${{ steps.jid.outputs.job_id }}" "stage_b_queued" \
+            --message "Automatic analysis validated production.json. Dispatching the existing Stage B workflow." \
+            --release-tag "${{ steps.jid.outputs.release_tag }}" \
+            --release-url "${{ steps.assets.outputs.release_url }}" \
+            --extra "automatic_mode=true" \
+            --extra "automatic_analysis_result=jobs/${{ steps.jid.outputs.job_id }}/automatic_analysis.json" \
+            --extra "production_ref=path:jobs/${{ steps.jid.outputs.job_id }}/production.json" \
+            --extra "music_ref=${{ steps.automatic_music.outputs.music_ref }}" \
+            --extra "music_source=${{ steps.automatic_music.outputs.music_source }}" \
+            --extra "original_asset_name=${ORIGINAL_ASSET_NAME}"
+
+      - name: Commit automatic production plan and status
+        if: ${{ github.event.inputs.automatic_mode == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash || true
+          git add "jobs/${{ steps.jid.outputs.job_id }}/production.json" \
+                  "jobs/${{ steps.jid.outputs.job_id }}/automatic_analysis.json" \
+                  "jobs/${{ steps.jid.outputs.job_id }}/status.json"
+          git commit -m "clipforge: automatic production plan for job ${{ steps.jid.outputs.job_id }}" || echo "nothing to commit"
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push; then pushed=true; break; fi
+            echo "automatic production plan push attempt $attempt failed — rebasing and retrying…" >&2
+            git pull --rebase --autostash
+            sleep 2
+          done
+          if [ "$pushed" != "true" ]; then
+            echo "FATAL: could not persist automatic production plan and queued status." >&2
+            exit 1
+          fi
+
+      - name: Dispatch existing Stage B from validated automatic plan
+        if: ${{ github.event.inputs.automatic_mode == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Resolve the default branch after the automatic production.json push,
+          # matching the browser's fresh-code Stage B dispatch behavior.
+          code_ref="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test -n "$code_ref"
+          gh workflow run stage-b.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            -f "job_id=${{ steps.jid.outputs.job_id }}" \
+            -f "production_ref=path:jobs/${{ steps.jid.outputs.job_id }}/production.json" \
+            -f "music_ref=${{ steps.automatic_music.outputs.music_ref }}" \
+            -f "code_ref=$code_ref"
+
+      - name: Commit final status
+        if: ${{ github.event.inputs.automatic_mode != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash || true
+          git add "jobs/${{ steps.jid.outputs.job_id }}/status.json"
+          git commit -m "clipforge: job ${{ steps.jid.outputs.job_id }} awaiting production.json" || echo "nothing to commit"
+          # Persisting the awaiting_json_upload status is a HARD
+          # requirement: if this push lost a race with another task's
+          # commit and the step failed, the failure handler below would
+          # stamp a false `error` status over an otherwise-successful
+          # Stage A run. Rebase and retry before giving up.
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push; then pushed=true; break; fi
+            echo "final status push attempt $attempt failed — rebasing onto latest origin and retrying…" >&2
+            git pull --rebase --autostash
+            sleep 2
+          done
+          if [ "$pushed" != "true" ]; then
+            echo "FATAL: could not persist the awaiting_json_upload status to origin after 3 attempts." >&2
+            exit 1
+          fi
+
+      - name: On failure, write error status
+        if: failure()
+        shell: bash
+        env:
+          AUTOMATIC_MODE_INPUT: ${{ github.event.inputs.automatic_mode }}
+        run: |
+          set -euo pipefail
+          message="Stage A failed. See workflow run for logs."
+          if [ "$AUTOMATIC_MODE_INPUT" = "true" ]; then
+            message="Automatic Mode failed after Stage A. No production.json was accepted or Stage B dispatched; see workflow run for the safe failure category."
+          fi
+          python scripts/write_status.py "${{ steps.jid.outputs.job_id }}" "error" \
+            --message "$message" \
+            --release-tag "${{ steps.jid.outputs.release_tag }}" \
+            --extra "automatic_mode=${AUTOMATIC_MODE_INPUT}" \
+            --extra "workflow_phase=stage_a" || true
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash || true
+          git add "jobs/${{ steps.jid.outputs.job_id }}/status.json" || true
+          git commit -m "clipforge: job ${{ steps.jid.outputs.job_id }} error" || true
+          # Best-effort, but retry with rebase so a concurrent task's push
+          # doesn't silently drop this task's error status.
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push; then pushed=true; break; fi
+            git pull --rebase --autostash || true
+            sleep 2
+          done
+          true

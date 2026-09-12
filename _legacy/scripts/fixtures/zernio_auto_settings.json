@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "auto_publish": true,
+  "automatic_mode": "smart_schedule",
+  "target_accounts": {
+    "tiktok": ["tt-one", "tt-two"],
+    "youtube": ["yt-one", "yt-two", "yt-three"]
+  },
+  "smart_schedule": {
+    "timezone": "Europe/London"
+  }
+}

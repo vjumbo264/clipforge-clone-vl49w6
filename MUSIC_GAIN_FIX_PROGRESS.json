@@ -1,0 +1,38 @@
+{
+  "initiative": "fix-loud-music-clamp",
+  "current_step": "pushed",
+  "empirical_analysis": {
+    "voiceover_target_lufs_used": -16.0,
+    "realistic_music_lufs_range_checked": [
+      -6,
+      -8,
+      -10,
+      -12,
+      -14
+    ],
+    "chosen_new_min_db": -60.0,
+    "chosen_max_db_unchanged_or_new_value": 24.0,
+    "reasoning": "Voiceover path normalizes to -16 LUFS (voiceover.py VOICE_CLARITY_TARGET_I_LUFS, verified in source). Required cut = voice_lufs + 10*log10(0.3) - music_lufs = voice_lufs - 10.46 - music_lufs. Realistic loud commercial music (-6..-14 LUFS) against -16..-23 LUFS voiceovers requires at most -29.5 dB of cut (voice -23 / music -6). No real signal measures far above +3 LUFS integrated (full-scale square wave is the physical ceiling), so the worst physically possible cut is ~-36.5 dB. New floor -60 dB leaves >23 dB of headroom beyond that while still clamping absurd demands from corrupt/misparsed readings (e.g. a reading tens of dB above digital full scale). The old -40 dB floor sat only ~3.5 dB below the physical ceiling \u2014 one unusual measurement away from under-correcting. MAX kept at +24 dB, independently justified: boosting a quiet file amplifies its noise floor by the same amount, so the boost side is deliberately conservative; +24 dB covers music down to ~-50 LUFS under -16 LUFS vocals. NOTE: the empirical matrix shows no REALISTIC loud-music combination ever reached the old -40 floor \u2014 any clamping it applied was by definition to non-physical readings \u2014 so if the operator's symptom persists after this fix, the next suspect is the measurement path itself (what loudnorm returns for the specific failing upload), not the clamp."
+  },
+  "fix": {
+    "status": "complete",
+    "commits": [
+      "2f002597daf7740bb4e4c36ccfee2d15eddf0c56"
+    ]
+  },
+  "tests_added": {
+    "loud_music_reaches_exact_ratio": true,
+    "pathological_still_clamped": true,
+    "quiet_music_regression_guard": true
+  },
+  "full_suite_passing": "music-gain and all related tests pass (8/8 MusicGainForRatioTests); 10 pre-existing environment-dependent failures on clean HEAD (YOLO/weights-dependent ReframeDetectionTierTests, status terminal-state test) verified via git stash to be unrelated to this fix \u2014 they fail identically without my changes",
+  "human_review_items": [
+    "Empirical matrix shows realistic combos need at most ~-29.5 dB of cut, so the old -40 dB floor could only ever clamp physically-impossible measurements. The operator's 'suffocating voiceover' report may involve an upload whose loudnorm integrated reading is extreme (e.g. sparse/transient-heavy music producing a misleading measurement) or a different mechanism \u2014 worth re-rendering with the actual failing music file to confirm resolution.",
+    "Pre-existing suite failures (ReframeDetectionTierTests x9, WriteStatusTests terminal-state) reproduce on unmodified HEAD \u2014 likely missing model weights/env deps in this sandbox; out of scope for this initiative."
+  ],
+  "resume_from": {
+    "file": "pipeline/tests/",
+    "component": "full test suite",
+    "next_operation": "run full pipeline test suite; if green, update full_suite_passing, record commit SHAs, push"
+  }
+}

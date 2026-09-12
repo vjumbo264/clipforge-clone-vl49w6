@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "job_id": "automatic-1787692652625",
+  "video_url": "path:jobs/automatic-1787692652625/source.torrent",
+  "source_type": "url",
+  "relay_release_tag": "",
+  "relay_expected_size": "",
+  "relay_sha256": "",
+  "torrent_file_index": "",
+  "whisper_model": "base",
+  "language": "auto",
+  "target_duration_seconds": "60",
+  "focus": "",
+  "automatic_mode": "true",
+  "series_mode": "true",
+  "series_id": "automatic-1787692652625",
+  "series_source_job_id": "automatic-1787692652625",
+  "series_part": "1",
+  "series_start_seconds": "0",
+  "series_context": "",
+  "saved_at_epoch": 1787692671
+}

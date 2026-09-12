@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clipforge.dev/schemas/job_status.schema.json",
+  "title": "ClipForge jobs/<job_id>/status.json",
+  "description": "Persistent per-job state record. See ARCHITECTURE.md §6.2. Written by every stage before and after its risky work.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "job_id",
+    "mode",
+    "series",
+    "state",
+    "message",
+    "created_at_epoch",
+    "updated_at_epoch",
+    "expires_at_epoch",
+    "release_tag",
+    "release_url",
+    "assets",
+    "run",
+    "publishing"
+  ],
+  "properties": {
+    "version": { "type": "integer", "const": 2 },
+    "job_id":  { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[A-Za-z0-9._-]+$" },
+    "mode":    { "type": "string", "enum": ["manual"] },
+    "series": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "series_id", "part", "start_seconds", "is_final"],
+      "properties": {
+        "enabled":       { "type": "boolean" },
+        "series_id":     { "type": "string" },
+        "part":          { "type": "integer", "minimum": 0 },
+        "start_seconds": { "type": "integer", "minimum": 0 },
+        "is_final":      { "type": "boolean" }
+      }
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "stage_a_running",
+        "awaiting_torrent_selection",
+        "awaiting_plan",
+        "stage_b_queued",
+        "stage_b_running",
+        "complete",
+        "error",
+        "cancelled"
+      ]
+    },
+    "message":           { "type": "string" },
+    "created_at_epoch":  { "type": "integer", "minimum": 0 },
+    "updated_at_epoch":  { "type": "integer", "minimum": 0 },
+    "expires_at_epoch":  { "type": "integer", "minimum": 0 },
+    "release_tag":       { "type": "string" },
+    "release_url":       { "type": "string" },
+    "assets": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "analysis_bundle_url": { "type": "string" },
+        "final_mp4":           { "type": "string" },
+        "final_zip":           { "type": "string" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow_run_id", "workflow_run_url", "code_ref"],
+      "properties": {
+        "workflow_run_id":  { "type": "integer", "minimum": 0 },
+        "workflow_run_url": { "type": "string" },
+        "code_ref":         { "type": "string" }
+      }
+    },
+    "publishing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "posts", "idempotency_key"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_requested",
+            "publishing",
+            "scheduled",
+            "published",
+            "partial",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "posts":           { "type": "array" },
+        "idempotency_key": { "type": "string" }
+      }
+    }
+  }
+}

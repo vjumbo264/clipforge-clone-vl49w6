@@ -1,0 +1,11 @@
+{
+  "scenario": "A courier slips into an office, takes a sealed folder, and triggers a silent alarm.",
+  "generated_after_guidance": "He slips into the office. The guard looks away. He takes the folder. The alarm is already live. He keeps moving. Then the door locks behind him. He has been discovered.",
+  "evidence": {
+    "present_tense_immediacy": ["slips", "looks", "takes", "keeps", "locks"],
+    "short_cause_effect_chain": ["He takes the folder. The alarm is already live."],
+    "withheld_then_revealed": ["The alarm is already live.", "Then the door locks behind him."],
+    "stakes_language": ["already live", "has been discovered"],
+    "external_observation": ["looks away", "takes the folder", "door locks"]
+  }
+}

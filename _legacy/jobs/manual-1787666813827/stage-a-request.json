@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "job_id": "manual-1787666813827",
+  "video_url": "https://t.me/yt4clipforge/3",
+  "torrent_file_index": "",
+  "whisper_model": "base",
+  "language": "auto",
+  "target_duration_seconds": "180",
+  "focus": "",
+  "automatic_mode": "false",
+  "series_mode": "true",
+  "series_id": "manual-1787666813827",
+  "series_source_job_id": "manual-1787666813827",
+  "series_part": "1",
+  "series_start_seconds": "0",
+  "series_context": "",
+  "saved_at_epoch": 1787666813
+}

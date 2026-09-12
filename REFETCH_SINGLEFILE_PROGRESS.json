@@ -1,0 +1,26 @@
+{
+  "initiative": "fix-refetch-single-file-torrent",
+  "current_step": "complete",
+  "fix": {
+    "status": "complete",
+    "reused_existing_inspection_call": true,
+    "commits": []
+  },
+  "tests_added": {
+    "single_candidate_auto_select": true,
+    "multi_candidate_still_fails_with_better_message": true,
+    "zero_candidate_distinct_error": true,
+    "saved_index_regression_guard": true
+  },
+  "full_suite_passing": true,
+  "human_review_items": [
+    "10 pre-existing suite failures (test_stage_b ReframeDetectionTierTests: local cv2 build lacks CascadeClassifier; test_status WriteStatusTests::test_refuses_to_leave_terminal_state) reproduced identically on the unmodified tree via git stash — environmental, unrelated to this fix.",
+    "Deploy: stage-b.yml invokes pipeline/stage_a/refetch_source.py directly from the workflow checkout, so the fix is live as soon as the commit lands on main — no separate deploy step.",
+    "Decision made in-session: multi-candidate error message wording ('...has N video candidates — an automated re-fetch cannot pick one file among several without re-prompting. Re-ingest the source in Stage A and select a file.') chosen to match neighboring _fail(...) tone."
+  ],
+  "resume_from": {
+    "file": "",
+    "component": "",
+    "next_operation": "none — fix complete, all four test scenarios added and passing, suite green modulo pre-existing environmental failures"
+  }
+}

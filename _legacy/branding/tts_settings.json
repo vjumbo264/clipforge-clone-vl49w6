@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "engine": "edge-tts",
+  "voice": "en-US-AndrewNeural",
+  "voice_label": "Andrew",
+  "rate": "+20%",
+  "volume": "+0%",
+  "pitch": "+0Hz",
+  "updated_at_epoch": 1787693948
+}

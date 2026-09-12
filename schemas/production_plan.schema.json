@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clipforge.dev/schemas/production_plan.schema.json",
+  "title": "ClipForge production.json",
+  "description": "The single hand-off contract from the analysis phase (manual agent) to Stage B render. Validated identically in bot/src/plan.js and pipeline/plan/schema.py. This JSON Schema is documentation and a coarse structural check; the fine-grained rules (sorted non-overlapping cuts, unique tags, series cut-window enforcement, etc.) live in the validator implementations and are the authoritative rules — see ARCHITECTURE.md §7.3.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["video_duration_seconds", "target_total_duration_seconds", "cuts"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Schema-family version. Optional and ignored by validators — unknown top-level fields are permitted."
+    },
+    "job_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "video_duration_seconds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "target_total_duration_seconds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "cuts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["start_seconds", "end_seconds"],
+        "properties": {
+          "start_seconds": { "type": "integer", "minimum": 0 },
+          "end_seconds":   { "type": "integer", "minimum": 1 },
+          "voiceover_text": { "type": "string", "minLength": 1 },
+          "raw_narration":  { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "hashtags": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 8,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "youtube_tags": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "series": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Preferred (ARCHITECTURE.md §7.3) nested series shape. See implementation notes: validators also accept the legacy flat series_* siblings.",
+      "required": ["series_id", "part", "start_seconds", "end_seconds", "is_final", "summary"],
+      "properties": {
+        "series_id":     { "type": "string", "minLength": 1 },
+        "part":          { "type": "integer", "minimum": 1 },
+        "start_seconds": { "type": "integer", "minimum": 0 },
+        "end_seconds":   { "type": "integer", "minimum": 1 },
+        "is_final":      { "type": "boolean" },
+        "summary":       { "type": "string", "minLength": 1, "maxLength": 1200 }
+      }
+    },
+    "series_id":            { "type": "string", "minLength": 1, "description": "Legacy flat form. Accepted alongside the nested `series` object per the closest-analog compatibility policy (mirrors how `raw_narration` is accepted alongside `voiceover_text`)." },
+    "series_part":          { "type": "integer", "minimum": 1 },
+    "series_start_seconds": { "type": "integer", "minimum": 0 },
+    "series_end_seconds":   { "type": "integer", "minimum": 1 },
+    "series_final":         { "type": "boolean" },
+    "series_summary":       { "type": "string", "minLength": 1, "maxLength": 1200 }
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "initiative": "remove-automatic-mode-then-strengthen-clip-length-prose",
+  "current_step": "complete",
+  "part_a_removal": {
+    "status": "complete",
+    "files_deleted": [
+      "pipeline/plan/automatic.py",
+      "pipeline/tests/test_automatic.py",
+      "pipeline/diagnostics/gemini.py",
+      "pipeline/tests/test_diagnostics.py"
+    ],
+    "references_cleaned": [
+      ".github/workflows/stage-a.yml (mode sanitizer + stale bug-30 header comments)",
+      ".github/workflows/diagnostics.yml (Gemini-capability job removed; Telegram-intake job kept)",
+      ".github/workflows/stage-b.yml (dead in-pipeline series continuation block removed)",
+      "pipeline/status.py (VALID_MODES manual-only; drop automatic_analysis_running state)",
+      "pipeline/plan/series.py (dead mode carry-forward simplified; stale comments)",
+      "pipeline/plan/music.py (orphaned module; automatic-mode wording in docstrings/errors)",
+      "bot/src/jobs.js (VALID_MODES manual-only; drop automatic_analysis_running state)",
+      "bot/src/series.js (mode check + doc comments)",
+      "bot/src/views.js (help text)",
+      "bot/src/wizard.js (doc comments only; mode:'manual' literals kept)",
+      "bot/src/index.js (Gemini-keys UI branch + doc comments; manual literals kept)",
+      "bot/src/github.js (doc comment)",
+      "bot/src/progress.js / anim.js (automatic_analysis_running rendering)",
+      "bot/src/constants.js (doc comment)",
+      "bot/test/series.test.mjs, bot/test/jobs.test.mjs",
+      "schemas/stage_a_request.schema.json, schemas/job_status.schema.json, schemas/production_plan.schema.json",
+      "README.md, ARCHITECTURE.md, NEXT_SESSION_PROMPT.md"
+    ],
+    "zernio_confirmed_untouched": true,
+    "final_grep_triage": [
+      "bot/src/zernio.js + pipeline/publish/zernio.py + tests: Zernio automatic publishing (automatic_mode publish_now/smart_schedule) \u2014 UNRELATED feature, kept untouched",
+      "bot/src/commands/start.js, clone-sync.js, runtime.js, README:50, scripts/reclaim-stale-task-labels.mjs: generic adverb uses (apply/reclaim/connected automatically) \u2014 unrelated, kept",
+      "pipeline/plan/prompt.py:1199/1205/1225 + tests/test_prompt_footage_longer_than_narration.py: AUTOMATICALLY retimes = renderer setpts behavior prose (Part B subject matter) \u2014 kept deliberately",
+      "stage-a.yml:525/646, stage-b.yml:666: release automatically deleted ~12h expiry comments \u2014 unrelated, kept",
+      "stage-b.yml:735-772: Zernio automatic publish dispatch \u2014 unrelated, kept",
+      "test_cleanup.py:97-98 + branding/zernio_queue.json: historical automatic-<ts> job ids \u2014 data, kept",
+      "pipeline/plan/prompt.py:1041, transcribe.py:25: generic adverbs \u2014 unrelated, kept",
+      "_legacy/ + all *_PROGRESS.json/FIX_STATE.json checkpoints: historical references \u2014 intentionally untouched",
+      "bot/test/series.test.mjs:115: legacy mode:automatic fixture now asserting continuation STILL works (backward-compat pin) \u2014 kept deliberately"
+    ],
+    "full_suite_passing": true,
+    "commits": [
+      "55ec299"
+    ]
+  },
+  "part_b_fix": {
+    "status": "complete",
+    "blocked_until_part_a_complete": false,
+    "added_text": "\n  NO STRETCH RATIO IS \"TOO EXTREME\" \u2014 A WORKED EXAMPLE.\n  Suppose a complete visual moment genuinely requires 60 seconds of raw\n  footage for its full payoff, and accurate narration for it only takes\n  15-20 seconds to speak. Your `end_seconds` must STILL cover the full\n  60 seconds. The same holds up to a full order of magnitude, if that's\n  genuinely what the visual payoff requires \u2014 an hour of raw footage\n  retimed to a few seconds of narration is handled exactly the same way\n  as a two-second mismatch: automatically, by the renderer, after you\n  submit.\n\n  If you notice yourself thinking \"this stretch ratio seems too extreme,\n  I should trim the clip to make it more proportionate\" \u2014 that thought\n  itself is the mistake this section exists to prevent. There is no such\n  thing as \"too extreme\" for this pipeline. The renderer does not care\n  whether the ratio is 1.1x or 10x; it applies the same setpts operation\n  either way. Your only job is picking `end_seconds` correctly per the\n  PICKING end_seconds rules \u2014 never adjusting it because the resulting\n  ratio \"feels\" extreme.\n\n  Shortening `end_seconds` does not make the final video shorter \u2014 the\n  final on-screen duration is always exactly the length of your\n  `voiceover_text`, regardless of how much or how little raw footage you\n  selected. The ONLY effect of shortening `end_seconds` is cutting off\n  visual content before the payoff \u2014 it has zero effect on pacing or\n  runtime. There is no mechanism by which trimming footage \"helps\" the\n  video in any way.\n\n",
+    "positioned_adjacent_to_footage_section": true,
+    "existing_sections_confirmed_unchanged": true,
+    "test_updated": true,
+    "full_suite_passing": true,
+    "commits": [
+      "088b053"
+    ]
+  },
+  "human_review_items": [
+    "pipeline/diagnostics/gemini.py + its diagnostics.yml job and test_diagnostics.py were removed: their ONLY purpose was probing Gemini models for the deleted Automatic Mode (gemini.py imports the now-deleted pipeline/plan/automatic for its model list). No other code references GEMINI_API_KEYS after Part A.",
+    "pipeline/plan/music.py was orphaned by the bug-30 workflow removal (no live importer/caller; stage-b.yml takes music_ref directly). Retained with automatic-mode wording scrubbed. Consider deleting in a future cleanup.",
+    "Historical jobs/ records (e.g. branding/zernio_queue.json's automatic-<ts> job id) intentionally untouched per plan.",
+    "pipeline/tests/test_status.py includes a pre-existing failure (test_refuses_to_leave_terminal_state) documented in FIX_STATE.json as failing on unmodified main."
+  ],
+  "resume_from": {
+    "file": "COMBINED_FIX_PROGRESS.json",
+    "component": "done",
+    "next_operation": "none - all three parts complete"
+  },
+  "part_c_fix": {
+    "status": "complete",
+    "blocked_until_part_b_complete": false,
+    "added_text": "\n   CUT LENGTH IS NOT A SERIES-PACING DECISION. The decision of WHERE this\n   part's story arc stops (per rules 4 and 9 above) is completely separate\n   from, and has ZERO influence on, how much raw footage any INCLUDED cut\n   uses. Once you have decided a scene belongs in this part, that scene's\n   end_seconds is chosen using ONLY the PICKING end_seconds visual-payoff\n   rules in STEP 3 \u2014 with exactly the same rigor, and exactly the same\n   tolerance for long stretch ratios, as every cut in every mode. Nothing\n   about series mode changes this.\n\n   Do not shorten a cut's footage because you're trying to \"save\" source\n   material for a future part, and do not worry about whether enough\n   source footage will remain for parts after this one. There is no such\n   requirement. A shorter series with fully-realized, complete scenes is\n   the correct and preferred outcome over a longer series achieved by\n   rationing footage across parts. If the source material naturally\n   supports only two well-realized parts, two parts is correct \u2014 do not\n   artificially extend the series or trim scenes to manufacture\n   additional parts.\n\n   This is the same principle as the general rule that shortening\n   end_seconds never controls pacing or length \u2014 it applies identically\n   whether or not this production is part of a series.\n",
+    "positioned_adjacent_to_rules_4_and_9": true,
+    "hook_cliffhanger_rules_confirmed_unchanged": true,
+    "test_updated": true,
+    "full_suite_passing": true,
+    "commits": [
+      "0f08f7e"
+    ]
+  }
+}

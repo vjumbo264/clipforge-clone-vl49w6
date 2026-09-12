@@ -1,0 +1,45 @@
+name: Gemini API capability diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Verify direct Gemini capabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install official Google Gen AI SDK
+        run: python -m pip install --disable-pip-version-check 'google-genai>=1.66,<2'
+
+      - name: Run redacted direct Gemini capability diagnostic
+        env:
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GEMINI_API_KEYS:-}" ]; then
+            echo 'FATAL: GEMINI_API_KEYS is not configured.' >&2
+            exit 2
+          fi
+          python scripts/gemini_api_capability_diagnostic.py \
+            --output gemini-api-capability-diagnostic.json
+
+      - name: Upload redacted diagnostic report
+        if: ${{ always() && hashFiles('gemini-api-capability-diagnostic.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gemini-api-capability-diagnostic
+          path: gemini-api-capability-diagnostic.json
+          if-no-files-found: error
+          retention-days: 7

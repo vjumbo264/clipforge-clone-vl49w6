@@ -1,0 +1,175 @@
+{
+  "sweep": "phase5-flow-regression",
+  "baseline_commit": "0281728b72ed3c21941bfecd41f1fa896e8de27c",
+  "current_step": "complete",
+  "root_cause": {
+    "traced": true,
+    "explanation": "parseFlowReply (bot/src/flow.js:143-147) returns a value ONLY when message.reply_to_message exists, was sent by a bot (from.is_bot === true), and carries a well-formed cf: marker; every other shape returns null. handleMessage (bot/src/index.js:303-360) checks in this order: (1) command dispatch (314-324), (2) parseFlowReply -> handleFlowReply routing (329-333), (3) the unconditional video/document reject branch (353-357), (4) showHome (359). The source-step prompt IS sent correctly: renderWizardStep (bot/src/commands/new.js:34-44) sends the source step via sendForceReply with a cf:wzs:<wizard-token> marker (line 41), so a genuine REPLY containing a .torrent/video routes correctly: case 'wzs' (index.js:372-380) -> handleWizardMessage (index.js:563-591), whose step==='source' branch accepts .torrent documents, videos and video-documents (565-576). The defect is reachable for exactly the message shapes that never carry reply_to_message: a FORWARDED file and a file sent from the attachment picker without first focusing the force_reply compose box both arrive as plain messages with no reply_to_message (Telegram attaches reply_to_message only when the user actually invokes the reply UI). For those shapes parseFlowReply returns null at 329, handleFlowReply is never called, and execution falls to the bug-05 reject branch at 353-357, which emits 'This video was not expected...' even though the prompt copy at bot/src/wizard.js:250 explicitly invites 'Send the video... or upload a .torrent file'. So the copy promises an input shape (forward/direct send) that the reply-only recognition mechanism structurally cannot catch. git history: the reject branch was introduced by commit 2619378 ('bug-05: acknowledge direct video forwards outside the wizard') during the Bot A rewrite, BEFORE the phase-5 stateless migration; in the pre-migration legacy bot (_legacy/telegram-bot/src/index.js:1779-1780, 1344-1351, 1383-1394) top-level routing sent message.video -> handleRelayVideo and message.document -> handleDocument, and those handlers consulted the STORED state.flow: when state.flow was 'manual_source'/'automatic_source' a bare forwarded/sent video or .torrent WAS accepted with no reply requirement. Phase 5 (steps 5.1-5.8, commits 4138946..eae6fcc) deleted that stored flow and replaced recognition with reply_to_message only, so the forward/direct-send shapes that legacy accepted at the source step regressed to the reject branch. Discrepancy vs the BACKGROUND section: none material — the background's account matches the trace; the only refinement is that the prompt IS already a sendForceReply wzs prompt (background step 4 asked to verify this; verified true), so the fix is NOT to wire in the marker but to handle the non-reply shapes.",
+    "file_line_citations": [
+      "bot/src/flow.js:143-147 (parseFlowReply reply-only gate)",
+      "bot/src/flow.js:112-124 (extractFlowPayload: text_link entities only, null otherwise)",
+      "bot/src/flow.js:127-135 (parseFlowMessage: null unless marker parses)",
+      "bot/src/index.js:314-324 (command dispatch first)",
+      "bot/src/index.js:329-333 (parseFlowReply -> handleFlowReply routing)",
+      "bot/src/index.js:353-357 (unconditional video/document reject branch, bug-05)",
+      "bot/src/index.js:359 (fallthrough to showHome)",
+      "bot/src/index.js:372-380 (case 'wzs' -> handleWizardMessage)",
+      "bot/src/index.js:563-591 (handleWizardMessage source branch accepts torrent/video/video-document)",
+      "bot/src/commands/new.js:34-44 (renderWizardStep: source step sent via sendForceReply + wzs marker, line 41)",
+      "bot/src/wizard.js:246-252 (stepPrompt source copy invites 'Send the video... or upload a .torrent file')",
+      "_legacy/telegram-bot/src/index.js:1779-1780 (legacy top-level video/document routing)",
+      "_legacy/telegram-bot/src/index.js:1344-1351,1383-1394 (legacy accepted bare forwards when stored state.flow was *_source)",
+      "commit 2619378 (bug-05: introduced the reject branch in the rewrite, pre-phase-5)",
+      "commits 4138946..eae6fcc (phase 5 steps 5.1-5.8 removed stored state.flow, leaving reply-only recognition)"
+    ],
+    "pre_existing_in_legacy_or_introduced_by_phase5": "Regression introduced by phase 5: legacy (stored state.flow) accepted bare forwarded/sent videos and .torrent files at the source step without any reply; phase 5's reply-only recognition removed that path, making the bug-05 reject branch (added pre-phase-5 by commit 2619378 for genuinely-out-of-flow forwards) reachable from inside an active wizard."
+  },
+  "primary_fix": {
+    "status": "complete",
+    "approach_chosen": "Direction (d): the wzs prompt already rides a marker, and replied files already route correctly; the only gap is the non-reply shapes (forward / direct send), which no stateless mechanism can attribute to a wizard. Fix = (1) rewrite the source-step prompt copy (wizard.js stepPrompt) to explicitly instruct 'REPLY to this message' with the video/torrent/link so the promised interaction matches what force_reply can actually catch; (2) harden the reject branch message so a non-reply file still tells the user to reply to the step-1 prompt. No new per-chat storage, no timing heuristics, reply-only contract for text flows untouched (parseFlowReply unchanged).",
+    "why_it_covers_reply_and_forward_and_direct_send": "Test scenario: (A) typed text/link answer composed in the force_reply box arrives WITH reply_to_message -> parseFlowReply returns wzs -> handleWizardMessage classifies the link (unchanged, already worked). (B) video/.torrent sent via the Telegram reply UI (long-press Reply on the prompt, or attachment picker while the reply compose box is focused) arrives WITH reply_to_message -> case 'wzs' -> handleWizardMessage source branch stages it (unchanged, already worked). (C) FORWARDED file or file sent without the reply box carries NO reply_to_message — no stateless code can attribute it to a wizard; after the fix the prompt copy has already told the user to reply, and the reject message (updated) re-states 'reply to the step-1 prompt' instead of the misleading 'not expected', so the user's next attempt succeeds via shape (B). The mechanism change needed is zero; the defect is that copy promised shapes the mechanism cannot catch, and the fix aligns copy + failure message with the mechanism.",
+    "commits": [
+      "8f9e46e"
+    ]
+  },
+  "other_findings": [
+    {
+      "opcode": "mupl",
+      "prompt_location": "bot/src/index.js:2702-2712 (sendMusicCollectPrompt)",
+      "handler_location": "bot/src/index.js:462-468 (case mupl) + 2716+ (handleMusicUploadMessage)",
+      "mismatch": "Prompt invites audio files whose natural gesture is forwarding from another chat; forwards/plain sends carry no reply_to_message, and bare audio previously fell SILENTLY through to showHome (worse than the source-step case, which at least had the video/document reject branch).",
+      "severity": "silent_fallthrough",
+      "status": "fixed",
+      "commit": "8f9e46e"
+    },
+    {
+      "opcode": "upl",
+      "prompt_location": "bot/src/index.js:1168-1186 (beginPlanUpload)",
+      "handler_location": "bot/src/index.js:382-395 (case upl) + handlePlanUploadMessage",
+      "mismatch": "Copy said 'send it as a .json file'; a forwarded/plain-sent .json carries no reply_to_message and hit the video/document reject branch with wrong copy ('This video was not expected...') — loud but wrong message.",
+      "severity": "loud_wrong_message",
+      "status": "fixed",
+      "commit": "8f9e46e"
+    },
+    {
+      "opcode": "uplb",
+      "prompt_location": "bot/src/index.js:1281-1286 (receiving indicator copy)",
+      "handler_location": "bot/src/index.js:397-413 (case uplb)",
+      "mismatch": "None — indicator copy invites only the next TEXT fragment ('reply the next fragment'); typed fragments arrive as reliable replies.",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    },
+    {
+      "opcode": "clname",
+      "prompt_location": "bot/src/index.js:1689",
+      "handler_location": "bot/src/index.js:417-418",
+      "mismatch": "None — copy invites only typed repo-name text ('Send a name...'), which always arrives as a reply.",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    },
+    {
+      "opcode": "patnew",
+      "prompt_location": "bot/src/index.js:1698,1720",
+      "handler_location": "bot/src/index.js:421-428",
+      "mismatch": "None — typed PAT text only.",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    },
+    {
+      "opcode": "patc",
+      "prompt_location": "bot/src/index.js:1704",
+      "handler_location": "bot/src/index.js:429-431",
+      "mismatch": "None — typed PAT text only.",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    },
+    {
+      "opcode": "repo",
+      "prompt_location": "bot/src/index.js:1826",
+      "handler_location": "bot/src/index.js:434-435",
+      "mismatch": "None — typed owner/repo text only.",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    },
+    {
+      "opcode": "gemkey",
+      "prompt_location": "bot/src/index.js:2190",
+      "handler_location": "bot/src/index.js:437-438",
+      "mismatch": "None — 'Send the key as a plain message' (typed text only).",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    },
+    {
+      "opcode": "wm",
+      "prompt_location": "bot/src/index.js:2268",
+      "handler_location": "bot/src/index.js:439-440",
+      "mismatch": "None — typed watermark text only.",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    },
+    {
+      "opcode": "news",
+      "prompt_location": "bot/src/index.js:2296",
+      "handler_location": "bot/src/index.js:441-442",
+      "mismatch": "None — typed broadcast text only.",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    },
+    {
+      "opcode": "zkey",
+      "prompt_location": "bot/src/index.js:2393",
+      "handler_location": "bot/src/index.js:443-444",
+      "mismatch": "None — 'Send the key as a plain message' (typed text only).",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    },
+    {
+      "opcode": "zsch",
+      "prompt_location": "bot/src/index.js:2482",
+      "handler_location": "bot/src/index.js:447-448",
+      "mismatch": "None — typed schedule values (hours/HH:MM/depth/datetime) only.",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    },
+    {
+      "opcode": "tpm",
+      "prompt_location": "bot/src/index.js:945-952",
+      "handler_location": "bot/src/index.js:452-453",
+      "mismatch": "None — typed YYYY-MM-DDTHH:MM text only.",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    },
+    {
+      "opcode": "tppm",
+      "prompt_location": "bot/src/index.js:954-962",
+      "handler_location": "bot/src/index.js:457-458",
+      "mismatch": "None — typed YYYY-MM-DDTHH:MM text only.",
+      "severity": "loud_wrong_message",
+      "status": "not_a_real_issue_after_investigation",
+      "commit": ""
+    }
+  ],
+  "human_review_items": [
+    "Architecture limitation (by design, NOT worked around): Telegram never attaches reply_to_message to forwarded or plain-sent files, so a stateless bot cannot attribute a bare forward/direct-send to a waiting prompt. The sweep aligned all prompt copy and failure messages with this reality (explicit 'reply to this prompt' instructions + loud, correctly-worded rejections for non-reply video/document/audio). True acceptance of bare forwards at a flow step would require stored per-chat 'awaiting input' state, which ARCHITECTURE.md §8.9 forbids; if product wants that UX, it needs an explicit architecture decision to reintroduce a minimal state record."
+  ],
+  "commits": [
+    "10706be",
+    "8f9e46e"
+  ],
+  "resume_from": {
+    "file": "",
+    "component": "",
+    "next_operation": "Sweep complete: root cause traced (10706be), primary wzs fix + mupl/upl fixes shipped with 5 new regression tests, all 182 tests green, all 15 opcodes swept (2 fixed incl. primary, 1 confirmed non-issue, 12 confirmed text-only). No further steps."
+  }
+}

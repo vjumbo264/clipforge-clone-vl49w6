@@ -1,0 +1,92 @@
+name: Zernio manual publish
+
+# On-demand "Publish now" button for a completed ClipForge job, in case the
+# automatic dispatch from Stage B failed, was skipped, or you simply want to
+# trigger it again by hand — the same idea as manually re-running Stage A or
+# Stage B. This does NOT create a duplicate live post for a job that already
+# published successfully: if the job already has a queued/published post, it
+# retries that same post via zernio-publish.yml's existing retry action
+# instead of starting a new one. It only ever starts a brand-new publish when
+# no attempt has been recorded for this job at all.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Completed ClipForge job id (the jobs/<job_id> folder)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clipforge-zernio-publishing
+  cancel-in-progress: false
+
+jobs:
+  resolve-and-dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout latest publishing implementation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve retry vs fresh publish for this job
+        id: resolve
+        shell: bash
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+        run: |
+          set -euo pipefail
+          IFS=$'\t' read -r ACTION MODE TIMEZONE TARGETS_JSON_B64 POST_ID < <(
+            python scripts/zernio_manual_resolve.py . "$JOB_ID" "branding/zernio_settings.json"
+          )
+          echo "action=$ACTION" >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "timezone=$TIMEZONE" >> "$GITHUB_OUTPUT"
+          echo "targets_b64=$TARGETS_JSON_B64" >> "$GITHUB_OUTPUT"
+          echo "post_id=$POST_ID" >> "$GITHUB_OUTPUT"
+          echo "Resolved manual dispatch: action=$ACTION post_id=${POST_ID:-<none>}"
+
+      - name: Dispatch zernio-publish.yml
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JOB_ID: ${{ inputs.job_id }}
+          ACTION: ${{ steps.resolve.outputs.action }}
+          MODE: ${{ steps.resolve.outputs.mode }}
+          TIMEZONE: ${{ steps.resolve.outputs.timezone }}
+          TARGETS_B64: ${{ steps.resolve.outputs.targets_b64 }}
+          POST_ID: ${{ steps.resolve.outputs.post_id }}
+        run: |
+          set -euo pipefail
+          if [ "$ACTION" = "retry" ]; then
+            gh workflow run zernio-publish.yml \
+              --repo "$GITHUB_REPOSITORY" \
+              --ref "${{ github.event.repository.default_branch }}" \
+              -f action=retry \
+              -f job_id="$JOB_ID" \
+              -f post_id="$POST_ID"
+            echo "Dispatched retry of existing post $POST_ID for job $JOB_ID."
+          else
+            TARGETS_JSON="$(python scripts/zernio_targets.py decode "$TARGETS_B64")"
+            gh workflow run zernio-publish.yml \
+              --repo "$GITHUB_REPOSITORY" \
+              --ref "${{ github.event.repository.default_branch }}" \
+              -f action=publish \
+              -f job_id="$JOB_ID" \
+              -f mode="$MODE" \
+              -f timezone="$TIMEZONE" \
+              -f targets_json="$TARGETS_JSON" \
+              -f request_id="clipforge-manual-$JOB_ID-$GITHUB_RUN_ID"
+            echo "Dispatched fresh publish for job $JOB_ID (no prior attempt found)."
+          fi

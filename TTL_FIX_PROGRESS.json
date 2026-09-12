@@ -1,0 +1,216 @@
+{
+  "initiative": "fix-ttl-config-disconnect-and-stuck-jobs",
+  "current_step": "fix_2_stuck_jobs",
+  "fix_1_ttl_config": {
+    "status": "complete",
+    "chosen_env_var_design": "Single canonical source: repo Actions variable CLIPFORGE_TTL_SECONDS (created this session, value 172800 = 48h). Both workflows consume it via ${{ vars.CLIPFORGE_TTL_SECONDS || '172800' }} (cleanup.yml additionally allows a workflow_dispatch input override for ad-hoc sweeps). pipeline/status.py now resolves new-job TTL through configured_ttl_seconds(): explicit --ttl-seconds arg (passed by stage-a.yml from the same env var) > CLIPFORGE_TTL_SECONDS env var > DEFAULT_TTL_SECONDS (12*3600, kept as documented no-config fallback for local runs/tests). The TELEGRAM BOT (bot/src/jobs.js::newStatus) was discovered during this fix to be the ACTUAL writer of every job's initial status.json \u2014 it had its own independent hardcoded DEFAULT_TTL_SECONDS = 12*3600 and was the true source of the 12h expires_at_epoch baked into all existing jobs (verified: bot 'create job' commit 82bca3e wrote expires=created+43200 before stage A ever ran). Bot now resolves TTL via configuredJobTtlSeconds(env) reading worker var CLIPFORGE_JOB_TTL_SECONDS, set to '172800' in bot/wrangler.bot-a.jsonc, and all three newStatus call sites in bot/src/index.js (startJob, startRelayJob, startNextSeriesPart) pass ttlSeconds: configuredJobTtlSeconds(env). (bot-b relay worker writes no job status; its wrangler config needs no var.)",
+    "stage_a_yml_updated": true,
+    "status_py_updated": true,
+    "cross_reference_comments_added": true,
+    "commits": []
+  },
+  "investigation": {
+    "evidence_base": {
+      "cleanup_run_examined": "34469909937 (2026-09-10T11:10:36Z, success; log: now=1789038644 ttl=43200; run predates fix-1 push 342a82f by ~2.5h)",
+      "analysis_epoch": 1789049954,
+      "on_disk_jobs": 19,
+      "live_releases": 17,
+      "expires_mutation_check": "No post-creation expires_at_epoch write path exists (bot/src/jobs.js newStatus create-time only; mergeStatus preserves existing value; pipeline/status.py writes only at creation/missing-field backfill). Git history of jobs/manual-1787970449255/status.json shows expires_at_epoch written only at creation (1788013678->1788014715->1788017251 are the pre-0e2f9d7-restore creation lineage, all create-time writes, all created+43200). No renewal/extend-on-touch bug."
+    },
+    "jobs_examined": [
+      {
+        "job_id": "manual-1787970449255",
+        "created_at_epoch": 1787974051,
+        "expires_at_epoch": 1788017251,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "folder-side: PROTECT job=manual-1787970449255 folder \u2014 series series-1787970477573 incomplete (expires_at=1788017251). No release: destroyed by pre-bug-66 run 1d6ad63, folder restored by 0e2f9d7 recovery."
+      },
+      {
+        "job_id": "series-1787970477573-p2",
+        "created_at_epoch": 1787977157,
+        "expires_at_epoch": 1788020357,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "folder-side: PROTECT job=series-1787970477573-p2 folder \u2014 series series-1787970477573 incomplete (expires_at=1788020357). No release: destroyed by 1d6ad63, restored by 0e2f9d7."
+      },
+      {
+        "job_id": "manual-1788023189426",
+        "created_at_epoch": 1788026849,
+        "expires_at_epoch": 1788070049,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "PROTECT job=manual-1788023189426 \u2014 series series-1788023208180 incomplete (expires_at=1788070049)"
+      },
+      {
+        "job_id": "manual-1788609489376",
+        "created_at_epoch": 1788611086,
+        "expires_at_epoch": 1788654286,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "PROTECT job=manual-1788609489376 \u2014 series series-1788609521896 incomplete (expires_at=1788654286)"
+      },
+      {
+        "job_id": "manual-1788618150427",
+        "created_at_epoch": 1788627225,
+        "expires_at_epoch": 1788670425,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "PROTECT job=manual-1788618150427 \u2014 series series-1788618217388 incomplete (expires_at=1788670425)"
+      },
+      {
+        "job_id": "series-1788618217388-p2",
+        "created_at_epoch": 1788639742,
+        "expires_at_epoch": 1788682942,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "PROTECT job=series-1788618217388-p2 \u2014 series series-1788618217388 incomplete (expires_at=1788682942)"
+      },
+      {
+        "job_id": "manual-1788717358337",
+        "created_at_epoch": 1788732488,
+        "expires_at_epoch": 1788775688,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "PROTECT job=manual-1788717358337 \u2014 series series-1788717386512 incomplete (expires_at=1788775688)"
+      },
+      {
+        "job_id": "manual-1788737322982",
+        "created_at_epoch": 1788739982,
+        "expires_at_epoch": 1788783182,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "PROTECT job=manual-1788737322982 \u2014 series series-1788737363336 incomplete (expires_at=1788783182)"
+      },
+      {
+        "job_id": "series-1788737363336-p2",
+        "created_at_epoch": 1788761291,
+        "expires_at_epoch": 1788804491,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "PROTECT job=series-1788737363336-p2 \u2014 series series-1788737363336 incomplete (expires_at=1788804491)"
+      },
+      {
+        "job_id": "manual-1788818277664",
+        "created_at_epoch": 1788837357,
+        "expires_at_epoch": 1788880557,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "PROTECT job=manual-1788818277664 \u2014 series series-1788818491776 incomplete (expires_at=1788880557)"
+      },
+      {
+        "job_id": "manual-1788993051296",
+        "created_at_epoch": 1788995472,
+        "expires_at_epoch": 1789038672,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "keep job=manual-1788993051296 (expires_at=1789038672) \u2014 stored value still in FUTURE at run time (run now=1789038644); expires 28s after that run"
+      },
+      {
+        "job_id": "series-1788993144175-p2",
+        "created_at_epoch": 1788997592,
+        "expires_at_epoch": 1789040792,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "keep job=series-1788993144175-p2 (expires_at=1789040792) \u2014 future at run time; now past, but sibling p3/p4/p5 unexpired at that moment so guard would protect anyway"
+      },
+      {
+        "job_id": "series-1788993144175-p3",
+        "created_at_epoch": 1788999234,
+        "expires_at_epoch": 1789042434,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "keep job=series-1788993144175-p3 (expires_at=1789042434) \u2014 future at run time"
+      },
+      {
+        "job_id": "series-1788993144175-p4",
+        "created_at_epoch": 1789000616,
+        "expires_at_epoch": 1789043816,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "keep job=series-1788993144175-p4 (expires_at=1789043816) \u2014 future at run time"
+      },
+      {
+        "job_id": "series-1788993144175-p5",
+        "created_at_epoch": 1789001978,
+        "expires_at_epoch": 1789045178,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": true,
+        "cleanup_log_reason": "keep job=series-1788993144175-p5 (expires_at=1789045178) \u2014 future at run time; is_final=true, whole series now past expiry"
+      },
+      {
+        "job_id": "manual-1789002135775",
+        "created_at_epoch": 1789022324,
+        "expires_at_epoch": 1789065524,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "keep job=manual-1789002135775 (expires_at=1789065524) \u2014 future at run time; series has non-terminal sibling (p3 awaiting_plan)"
+      },
+      {
+        "job_id": "series-1789002249271-p2",
+        "created_at_epoch": 1789028129,
+        "expires_at_epoch": 1789071329,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "keep job=series-1789002249271-p2 (expires_at=1789071329) \u2014 future"
+      },
+      {
+        "job_id": "series-1789002249271-p3",
+        "created_at_epoch": 1789028765,
+        "expires_at_epoch": 1789071965,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "keep job=series-1789002249271-p3 (expires_at=1789071965) \u2014 future; state=awaiting_plan (non-terminal, genuinely in progress)"
+      },
+      {
+        "job_id": "manual-1789040051954",
+        "created_at_epoch": 1789040070,
+        "expires_at_epoch": 1789083270,
+        "stored_value_in_past": true,
+        "series_enabled": true,
+        "series_is_complete_result": false,
+        "cleanup_log_reason": "No log line in run 34469909937 \u2014 job created at 1789040070 (~11:34Z), AFTER that run (11:10Z). state=awaiting_plan, expires in future. Not one of the stuck jobs."
+      }
+    ],
+    "confirmed_root_cause": "CONFIRMED via 19/19 on-disk jobs + live releases + actual cleanup run 34469909937 log (2026-09-10T11:10Z, now=1789038644, ttl=43200). NO expires_at_epoch mutation/renewal exists: the only writers are bot/src/jobs.js::newStatus (create) and pipeline/status.py (initial write + missing-field backfill); git history of manual-1787970449255/status.json shows only creation-time 12h writes plus bot mergeStatus updates that (post-fix-1) never rewrite an existing expires_at_epoch (pin: merge-never-rewrites-expiry test). Stored expires_at_epoch values are correctly computed (created+43200) and ARE in the past for the stuck jobs \u2014 expiry computation is fine. The mechanism is a SEMANTIC DEADLOCK in the bug-66 guard (series_is_complete in pipeline/cleanup/expired.py): a series is 'complete' only when every on-disk part is terminal AND at least one part is marked is_final=true. The bot never auto-queues a next part \u2014 the operator must press 'Start next part' \u2014 and only the FINAL part ever carries is_final=true. Every job in this repo has series.enabled=true (even one-off 'manual-' jobs get a series_id), so ANY abandoned/non-finalized series has zero is_final parts and is classified INCOMPLETE FOREVER, and the guard protects its expired parts on every hourly run indefinitely (exact log lines: 'PROTECT job=manual-1788609489376 \u2014 series series-1788609521896 incomplete'). 8 distinct single/two-part series with all parts terminal, expires_at_epoch 2-11 days in the past, are kept solely by this guard; 2 jobs (manual-1787970449255, series-1787970477573-p2) are metadata-only folders whose releases were already destroyed by the pre-bug-66 run 1d6ad63 and restored by recovery 0e2f9d7 \u2014 they are stuck for the same guard reason. The younger series (1788993144175, 1789002249271) are NOT stuck: their stored expires_at_epoch were still in the future at the examined run (old 12h math; fix #1 makes new jobs 48h) or have a genuinely non-terminal sibling (awaiting_plan). Root cause is therefore NOT a TTL-duration problem (that was fix #1) and NOT an expiry-computation bug \u2014 it is that the protective guard has no time-based exit: a series abandoned before its final part can never become complete, so its parts can never expire."
+  },
+  "fix_2_stuck_jobs": {
+    "status": "in_progress",
+    "approach": "Add a time-based exit to the zero-final deadlock WITHOUT weakening in-flight protection: series_is_complete gains a finalization-grace rule \u2014 when no part is marked is_final, the series is complete iff EVERY on-disk part is terminal AND every part's expires_at_epoch is in the past (unknown/missing expiry = protected, safe). A series whose newest part is still within its TTL (e.g. scheduled publishing still pending, next part plausibly coming) stays protected exactly as today; a series with a non-terminal sibling stays protected exactly as today (bug-49). With fix #1's 48h TTL, an abandoned series' parts are reaped 48h after the LAST part was created instead of never. Also: bot/src/jobs.js mergeStatus missing-expiry backfill switches from hardcoded DEFAULT_TTL_SECONDS to configuredJobTtlSeconds(env) (consistency with fix #1; backfill never fires for real jobs, defensive only). Existing status.json files are NOT edited: no data correction is needed \u2014 the stored expires_at_epoch values are correct; the fix is in the DECISION logic, and the next hourly sweep (post-deploy) naturally reaps the confirmed-abandoned expired series.",
+    "existing_job_data_corrected": null,
+    "commits": []
+  },
+  "tests_added": [
+    "pipeline/tests/test_status.py::TtlConfigurationTests (7 tests: env-wins, fallback, bad-env-safe, explicit-arg-wins, first-write-uses-config, late-backfill-uses-config, merge-never-rewrites-expiry)",
+    "pipeline/tests/test_status.py::WorkflowTtlAgreementTests (5 tests parsing real stage-a.yml/cleanup.yml/wrangler.bot-a.jsonc to assert one shared TTL source + no 12h drift regression)",
+    "bot/test/jobs.test.mjs (3 tests: configuredJobTtlSeconds resolution, newStatus uses configured 48h, explicit ttlSeconds beats env / no-env falls back)"
+  ],
+  "full_suite_passing": false,
+  "human_review_items": [
+    "OPERATOR ACTION REQUIRED OUTSIDE THE REPO: bot/wrangler.bot-a.jsonc now sets CLIPFORGE_JOB_TTL_SECONDS=172800, but the Cloudflare Worker only picks it up on the next bot deploy (deploy-bots.yml runs on bot/** changes, so pushing this commit may auto-deploy; verify the deploy ran and the var is live). Until then the bot still creates jobs with the old 12h TTL baked in.",
+    "Single canonical TTL value now lives as the repo Actions variable CLIPFORGE_TTL_SECONDS=172800 (created via gh this session). The '172800' fallback literals in stage-a.yml/cleanup.yml/wrangler.bot-a.jsonc are deliberate in-repo mirrors, pinned by WorkflowTtlAgreementTests so they cannot drift without failing the suite."
+  ],
+  "resume_from": {
+    "file": "pipeline/cleanup/expired.py",
+    "component": "series_is_complete",
+    "next_operation": "Implement zero-final time-based completion fallback + tests + bot backfill consistency, run suites, commit."
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "clipforge-telegram-bot",
+  "main": "src/index.js",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": true,
+  "vars": {
+    "INTERNAL_RELAY_GROUP_CHAT_ID": "-5405387856",
+    "ORIGINAL_CLIPFORGE_REPOSITORY": "motionssalt/clipforge",
+    "BOT_B_TELEGRAM_USERNAME": "Clipforgedl_bot"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CLIPFORGE_BOT_KV",
+      "id": "b09957b233c247deb40cc703ffadc95d"
+    }
+  ]
+}

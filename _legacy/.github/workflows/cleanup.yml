@@ -1,0 +1,94 @@
+name: Cleanup — Delete jobs older than 12 hours
+
+on:
+  schedule:
+    # Hourly, on the :07 minute to avoid the top-of-hour scheduler surge.
+    - cron: "7 * * * *"
+  workflow_dispatch:
+    inputs:
+      ttl_seconds:
+        description: "Override TTL in seconds (default 43200 = 12h)"
+        required: false
+        type: string
+        default: "43200"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: clipforge-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Cleanup expired jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Install Python deps
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          # Build-time prereqs for pkuseg (see below): numpy headers plus a
+          # modern Cython, both importable in the pkuseg build environment.
+          # chatterbox-tts 0.1.4 requires numpy<1.26.0,>=1.24.0.
+          pip install "numpy>=1.24.0,<1.26.0" cython
+          # pkuseg 0.0.25 (exact pin of chatterbox-tts) has no Python 3.11
+          # wheels, so pip builds it from the sdist. The sdist ships stale
+          # pre-generated .cpp files produced by an old Cython that contain
+          # `#include "longintrepr.h"` — a CPython internal header removed
+          # in Python 3.11 — and pkuseg's setup.py only re-runs cythonize()
+          # when PKG-INFO is absent (i.e. NOT in an sdist), so the stale
+          # sources are compiled verbatim and the build dies with
+          # "fatal error: longintrepr.h: No such file or directory".
+          # Fix: unpack the sdist, delete the stale .cpp files so modern
+          # Cython regenerates them from the .pyx sources, then build with
+          # --no-build-isolation so setup.py's top-level `import numpy`
+          # and the re-cythonization see the packages installed above.
+          workdir="$(mktemp -d)"
+          pip download pkuseg==0.0.25 --no-deps --no-binary :all: \
+            --no-build-isolation -d "$workdir"
+          tar -xzf "$workdir/pkuseg-0.0.25.tar.gz" -C "$workdir"
+          find "$workdir/pkuseg-0.0.25" -name '*.cpp' -delete
+          pip install "$workdir/pkuseg-0.0.25" --no-build-isolation
+          rm -rf "$workdir"
+          pip install -r scripts/requirements.txt
+
+      - name: Run cleanup
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CLIPFORGE_TTL_SECONDS: ${{ github.event.inputs.ttl_seconds || '43200' }}
+        run: |
+          set -euo pipefail
+          python scripts/cleanup.py
+
+      - name: Commit removed job folders (if any)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain jobs/ 2>/dev/null || true)" ]; then
+            git add -A jobs/
+            git commit -m "clipforge: cleanup expired job folders" || echo "nothing to commit"
+            git pull --rebase --autostash || true
+            git push
+          else
+            echo "No job-folder changes to commit."
+          fi

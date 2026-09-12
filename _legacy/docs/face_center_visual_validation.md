@@ -1,0 +1,3 @@
+# Face-centered cinematic reframe validation
+
+The real InsightFace `buffalo_sc` detector was exercised on the public Sintel frame fixture. It detected a prominent face with `position_source: prominent_face`, `subject_center_x: 0.6230606556524089`, `subject_center_y: 0.4094176767386652`, and the production crop plan selected `crop_offset_x: 0.7492367709415875` for the 1080x1200 cinematic frame. The source frame shows the character to the right of center; the rendered production frame visibly shifts and enlarges the character so the face is centered in the vertical composition. The output was rendered through `cinematic_reframe.scene_crop_filter` and encoded as H.264.

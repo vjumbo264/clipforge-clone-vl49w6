@@ -1,0 +1,48 @@
+{
+  "initiative": "fix-plan-paste-regression",
+  "baseline_commit": "ff5affe",
+  "current_step": "complete",
+  "ground_truth": {
+    "issue_a_bare_send_mechanism": {
+      "tested": true,
+      "result": "working",
+      "evidence": "bot/test/plan-paste-ground-truth.test.mjs run against unmodified ff5affe code: (1) 'A: a multi-bubble paste of a VALID plan assembles and dispatches with NO reply on any bubble' PASSED — a 2-bubble bare paste (upl awaiting_input row seeded exactly as the sendForceReply choke point writes it) routed bubble 1 via the upl row, re-anchored the row to uplb with the accumulated buffer (asserted via getAwaitingInput), routed bubble 2 via the uplb row, validated, committed jobs/<id>/production.json to the repo and dispatched Stage B. (2) 'A: a SECOND bare continuation fragment keeps the full buffer (re-anchor on indicator edit)' PASSED — 3 bare bubbles; after bubble 2 (indicator EDIT path, where the sendForceReply choke point cannot see the write) the row still carried BOTH accumulated fragments, and the full plan assembled and committed. The prior session's explicit putAwaitingInput re-anchor on the edit-success path IS reached and IS correct. (3) 'A: a genuine reply to the upl prompt still works' PASSED. HOWEVER the copy test FAILED pre-fix: the ⏳ indicator text still said 'assembling pasted plan — reply the next fragment to this message.' and the beginPlanUpload prompt still said 'reply the first fragment to this prompt, then reply each following fragment to the ⏳ receiving indicator.' — both contradicting the working bare-send mechanism. So Issue A was MECHANISM-WORKING + STALE-COPY. Why the operator's lived experience doesn't match: (a) the indicator copy itself instructed a reply, so the operator reasonably believed a reply was required; (b) Issue B made the assembled JSON FAIL VALIDATION even when routing worked, and the validation-failure view said 'reply to the upload prompt to retry', further reinforcing the reply framing; (c) between 8f9e46e and 7b63eac bare sends genuinely were broken, which is the window the operator's memory covers.",
+      "root_cause_if_broken": ""
+    },
+    "issue_b_fragment_join": {
+      "tested": true,
+      "result": "safe_join_other_bug_found",
+      "evidence": "Exhaustive split-offset sweep over a REAL valid production.json (schema clipforge.production_plan/v1, nested cuts[].keywords array of {word,color} objects — the operator's shape — pretty-printed, 2-space indent): pre-fix, 312 split offsets corrupted the document when fed through the handler's exact capture+assembly path (per-bubble String(message.text||'').trim() then fragments.join('')) and the REAL parseAndValidateProductionPlan — every offset inside a whitespace run (newline+indent) or inside a string value adjacent to whitespace lost real characters. Examples captured by the test: splits at '{\\n  \"schema\"' lost the newline and indent; a split between 'mountain ' and 'sunrise' inside a keywords[].word string value deleted the space, yielding 'mountainsunrise' — silently wrong data; splits leaving a fragment starting with ']' or '}' after eaten whitespace produced the operator's exact 'Unexpected token' validation-failure class on operator-verified-valid JSON. CONCLUSION: join('') with no separator is CORRECT (Telegram splits by length with no boundary characters added or removed; nothing in the bug-08/27/38/44 paper trail documents boundary mutation, and join('') reassembles losslessly whenever no trim has eaten characters). The defect was the PER-BUBBLE TRIM at capture time, introduced when bug-08's fragment buffering reused the single-bubble capture line. looksLikePartialJson is NOT defective: it re-scans the full joined text each time, so string/escape state across a boundary is correct BY CONSTRUCTION as long as the joined bytes are intact — investigation point 2's suspected inString/escaped cross-fragment bug does not exist in the current code shape. POST-FIX: the same sweep and all targeted split-shape tests (mid-whitespace, mid-string, token-boundary, empty trailing fragment, ]/}-boundary 3-bubble) PASS — 9/9 in the ground-truth suite, 202/202 overall.",
+      "root_cause": "Per-bubble .trim() in handlePlanUploadMessage's text capture (bot/src/index.js: text = String(message.text || '').trim()) deleted real characters at every split point landing inside whitespace or inside a string value next to whitespace; and the `if (!text)` early-return discarded an in-flight paste when a trailing/whitespace-only bubble arrived. join('') itself was byte-safe and has been KEPT."
+    }
+  },
+  "fixes": {
+    "issue_a": {
+      "status": "complete",
+      "approach": "Copy-only fix, justified by the PASSING bare-send ground-truth tests (mechanism proven working, including the uplb edit-path re-anchor). The ⏳ indicator text and the beginPlanUpload prompt no longer instruct a reply; restored to the pre-migration bug-44-era wording found in git history (indicator: 'assembling pasted plan — this resolves automatically.'; prompt: 'Paste the JSON as a message, or send it as a .json file.' + 'Long pastes that Telegram splits into multiple bubbles are reassembled automatically — just keep pasting.'). The validation-failure view's trailing '— reply to the upload prompt to retry.' was also dropped for the same reason (a re-sent paste routes bare via awaiting_input).",
+      "commits": [
+        "1bfb0eb"
+      ]
+    },
+    "issue_b": {
+      "status": "complete",
+      "approach": "Fixed the proven defect only (no speculative double-fix): handlePlanUploadMessage now captures EVERY text bubble RAW (String(message.text || ''), never trimmed) so join('') reproduces the operator's original paste byte-for-byte regardless of where Telegram split it. Leading/trailing paste padding is unaffected because looksLikePartialJson and stripCodeFence each trim their own working copies and JSON.parse tolerates surrounding whitespace. Additionally, an empty/whitespace-only bubble arriving mid-paste (buffer non-empty) no longer drops the in-flight paste with '⚠️ Paste the production.json text' — it re-anchors the existing buffer via the extracted keepPlanPasteAlive() helper (which also deduplicates the indicator edit/repost + awaiting_input re-anchor block the partial branch already used). join('') and looksLikePartialJson were verified correct by the ground-truth sweep and deliberately left untouched.",
+      "commits": [
+        "1bfb0eb"
+      ]
+    }
+  },
+  "commits": [
+    "c5c7ff8 (ground-truth verification)",
+    "1bfb0eb (Issue A copy + Issue B trim fix)"
+  ],
+  "human_review_items": [
+    "Cloudflare Bot A worker must be redeployed for the fix to reach production (this session cannot deploy; code + tests only).",
+    "Optional UX follow-up: the indicator copy 'this resolves automatically' restores the bug-44 wording verbatim; if the operator prefers a more explicit 'no reply needed' hint, that is a pure copy tweak."
+  ],
+  "resume_from": {
+    "file": "",
+    "component": "",
+    "next_operation": "none — both issues fixed and verified (9/9 ground-truth, 202/202 total); awaiting only production redeploy"
+  }
+}

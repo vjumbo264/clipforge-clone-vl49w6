@@ -1,0 +1,65 @@
+# --- Transcription stack -----------------------------------------------------
+# faster-whisper drives Stage A's Silero-VAD-gated Whisper transcription.
+# Its VAD filter (vad_filter=True in transcribe.py) needs onnxruntime to be
+# importable at runtime.
+faster-whisper==1.0.3
+onnxruntime>=1.17,<2
+
+# --- Imaging -----------------------------------------------------------------
+# Pillow is used by brand_scene.py / brand_scenes.py for the overlay
+# composition (avatar, username, hashtags) that Stage B burns onto the
+# final MP4.
+Pillow>=10.3,<12
+
+# --- Local face detection ----------------------------------------------------
+# Scene-level cinematic reframing reuses the repository's CPU-only InsightFace
+# FaceAnalysis approach. OpenCV loads sampled frames and onnxruntime (above)
+# runs the model locally. If model initialization fails at runtime, Stage B
+# retains its safe centered crop rather than failing the render.
+opencv-python-headless>=4.8,<5
+insightface==0.7.3
+
+# --- Numerics ----------------------------------------------------------------
+# numpy is a first-class dependency of faster-whisper and of a couple of
+# our own helpers (subtitle timing math, key-moment scoring). Kept
+# unpinned within a broad range so it resolves compatibly with whatever
+# version faster-whisper wants at install time.
+numpy>=1.24,<3
+
+# --- HTTP --------------------------------------------------------------------
+# `requests` is used by the drive downloader and by a couple of GitHub
+# helpers on the runner side. Edge TTS uses its own supported client library,
+# while keeping requests here matches the rest of the pipeline.
+requests>=2.32,<3
+
+# --- Gemini API (native Automatic Mode analysis) -----------------------------
+#
+# Automatic Mode uses the official Google Gen AI SDK for direct Gemini
+# Developer API function calling and inline image input. API keys remain
+# Actions-only secrets supplied through GEMINI_API_KEYS.
+google-genai>=1.66,<2
+
+# --- Voiceover TTS (Microsoft Edge online service) ---------------------------
+#
+# Stage B synthesizes each voiceover using Edge TTS. It needs no API key;
+# the selected, non-secret narrator identifier is loaded from
+# branding/tts_settings.json by scripts/generate_voiceover.py. The module
+# returns MP3 transport audio which the script immediately normalizes and
+# masters into ClipForge's unchanged 24 kHz mono PCM WAV contract.
+edge-tts==7.2.8
+
+# --- Telegram public-post intake ------------------------------------------------
+# Stage A uses yt-dlp only for public Telegram channel-post videos. No social
+# platform cookies or browser impersonation are accepted. A dedicated,
+# encrypted MTProto session may be injected only by Stage A to retrieve public
+# channel media that Telegram does not expose to anonymous web clients.
+yt-dlp[default]>=2026.1,<2027
+# Telethon automatically uses cryptg for MTProto encryption/decryption when
+# available. This removes the pure-Python AES bottleneck for large media.
+cryptg>=0.4,<1
+telethon>=1.44,<2
+
+# --- Trusted Telegram relay ---------------------------------------------------
+# The central temporary relay decrypts Bot B routing ciphertext using AES-GCM.
+# It never writes the decrypted target credential or Bot B identity to disk.
+cryptography>=43,<47

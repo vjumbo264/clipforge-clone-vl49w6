@@ -1,0 +1,43 @@
+{
+  "initiative": "hide-next-part-button-when-dispatched",
+  "current_step": "tests_added_and_passing",
+  "design": {
+    "check_location": "caller_async_then_pass_in",
+    "check_location_detail": "showTask in bot/src/runtime.js computes nextPartExists via the same manualSeriesContinuation + nextPartJobId derivation startNextSeriesPart uses, only when the completed-manual-series button would otherwise be shown, then passes nextPartExists as a 4th argument to the still-synchronous taskKeyboard.",
+    "nextId_derivation_reused_from_startNextSeriesPart": "manualSeriesContinuation(status, request, plan) + nextPartJobId(continuation) from bot/src/series.js \u2014 identical to lines 1462/1468 in bot/src/index.js",
+    "call_sites_updated": [
+      "bot/src/runtime.js showTask (only taskKeyboard caller in the whole repo \u2014 verified via grep across bot/ and repo)"
+    ]
+  },
+  "delete_flow_investigation": {
+    "checked": true,
+    "delete_removes_github_files": true,
+    "delete_removes_github_files_detail": "bot/src/github.js deleteClipforgeJob (~line 1249) enumerates the recursive tree, filters entries whose path starts with 'jobs/<jobId>/', and deletes each blob via deleteRepositoryFile \u2014 both jobs/<nextId>/status.json and jobs/<nextId>/stage-a-request.json are removed from the default branch, and the release+tag are deleted. Since taskKeyboard's new check reads live from GitHub each render, the button naturally reappears on the previous part's card after the next part is deleted; no cached flag to invalidate.",
+    "gap_found_and_fixed": false
+  },
+  "fix": {
+    "status": "complete",
+    "commits": []
+  },
+  "tests_added": [
+    "bot/test/next-part-button-hide.test.mjs :: taskKeyboard shows Start next part when nextPartExists is false (pre-fix behavior preserved)",
+    "bot/test/next-part-button-hide.test.mjs :: taskKeyboard hides Start next part when nextPartExists is true (new behavior)",
+    "bot/test/next-part-button-hide.test.mjs :: taskKeyboard still hides Start next part when the plan says is_final=true, regardless of nextPartExists",
+    "bot/test/next-part-button-hide.test.mjs :: taskKeyboard defaults nextPartExists to false so legacy call sites keep pre-fix behavior",
+    "bot/test/next-part-button-hide.test.mjs :: deriveNextPartId matches nextPartJobId(manualSeriesContinuation(...)) - startNextSeriesPart parity guard",
+    "bot/test/next-part-button-hide.test.mjs :: deriveNextPartId returns null when the current job is not a continuable part",
+    "bot/test/next-part-button-hide.test.mjs :: nextPartAlreadyExists returns true when the next part status.json exists (+ probes the correct jobs/<nextId>/ paths)",
+    "bot/test/next-part-button-hide.test.mjs :: nextPartAlreadyExists returns true when only the next part stage-a-request.json exists",
+    "bot/test/next-part-button-hide.test.mjs :: nextPartAlreadyExists returns false when NEITHER next-part file exists",
+    "bot/test/next-part-button-hide.test.mjs :: nextPartAlreadyExists short-circuits (NO GitHub call) on states where the button would never render",
+    "bot/test/next-part-button-hide.test.mjs :: showTask HIDES Start next part when the next part already exists in the repo",
+    "bot/test/next-part-button-hide.test.mjs :: showTask reveals Start next part again when the next part's files are removed (delete-then-reappears)"
+  ],
+  "full_suite_passing": true,
+  "human_review_items": [],
+  "resume_from": {
+    "file": "",
+    "component": "",
+    "next_operation": "done"
+  }
+}

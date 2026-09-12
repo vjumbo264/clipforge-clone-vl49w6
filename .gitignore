@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Local scratch / media work directories
+work/
+tmp/
+*.log
+
+# OS
+.DS_Store
+
+# Secrets and local environment files — never commit these
+.env
+.env.*
+*.pem
+*.session
+secrets*.json

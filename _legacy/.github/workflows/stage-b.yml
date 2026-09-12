@@ -1,0 +1,968 @@
+name: Stage B — Produce Final Video (voiceover + subtitles, one merged MP4)
+
+# This is deliberately keyed by the job id. Besides making a run easy for the
+# static site to identify after a refresh, it prevents cross-job run confusion.
+run-name: Stage B — ${{ inputs.job_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Job id (must match an existing Stage A release: clipforge-<job_id>)"
+        required: true
+        type: string
+      production_ref:
+        description: "Where production.json lives. One of: path:<repo-path> | asset:<asset-name> | url:<https-url>"
+        required: true
+        type: string
+        default: "path:jobs/<JOB_ID>/production.json"
+      music_ref:
+        description: "Optional background music for this job. Empty = no music. One of: path:<repo-path> | asset:<asset-name> | url:<https-url> — the site commits uploads to jobs/<job_id>/music.mp3 and passes path:jobs/<job_id>/music.mp3"
+        required: false
+        type: string
+        default: ""
+      enhance:
+        description: "Apply the tuned quality enhancement filter chain (denoise + color grade + sharpen) to the merged video. Default true; set to false to ship unenhanced for comparison."
+        required: false
+        type: string
+        default: "true"
+      code_ref:
+        description: "Optional current default-branch SHA to check out and run THIS Stage B execution from. ClipForge resolves and passes the current tip for every new or recovery dispatch so a failed job never reuses the old workflow commit. Empty = resolve the repository's current default branch at execution time."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: clipforge-stage-b-${{ github.event.inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  stage_b:
+    name: Stage B
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      # ---------------------------------------------------------------------
+      # RESTART CORRECTNESS — always run the NEWEST code on a restart.
+      #
+      # The site's "Restart Stage B" is NOT a GitHub "re-run" (which would
+      # pin the run to the ORIGINAL run's commit). It is a fresh
+      # workflow_dispatch that resolves the default branch to its CURRENT
+      # tip SHA and passes it as the `code_ref` input. actions/checkout
+      # accepts a branch, tag, OR a full commit SHA in `ref`, so pinning the
+      # checkout to that freshly-resolved SHA guarantees the restarted run
+      # executes the newest pushed code even if the branch-named dispatch
+      # ref raced the push.
+      #
+      # Every ClipForge start and recovery dispatch now sends a freshly
+      # resolved `code_ref`. A direct workflow_dispatch without that input
+      # falls back to the repository's CURRENT default branch rather than the
+      # dispatch event's historical workflow SHA.
+      # ---------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.code_ref != '' && github.event.inputs.code_ref || github.event.repository.default_branch }}
+
+      - name: Log the exact code revision this run is executing
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "dispatch ref (github.ref)     : ${{ github.ref }}"
+          echo "dispatch sha (github.sha)     : ${{ github.sha }}"
+          echo "code_ref input (current pin)  : ${{ github.event.inputs.code_ref }}"
+          echo "default branch fallback        : ${{ github.event.repository.default_branch }}"
+          echo "checked-out commit (HEAD)     : $(git rev-parse HEAD)"
+          echo "checked-out commit subject    : $(git log -1 --pretty=%s)"
+
+      # ---------------------------------------------------------------------
+      # STATUS-PUBLISH CORRECTNESS — never run the status-commit steps from
+      # a detached HEAD.
+      #
+      # A restart pins the checkout to a commit SHA via `code_ref` so the
+      # run executes the NEWEST code (see the checkout step above). But
+      # checking out a raw SHA leaves HEAD DETACHED, and a detached checkout
+      # cannot `git push` — the status-commit steps below then die at the
+      # very end of an otherwise-successful Stage B run with:
+      #
+      #     fatal: You are not currently on a branch.
+      #
+      # The SHA pinned by the site IS the tip of the dispatch branch at
+      # click time (restartStageB() in app.js resolves REF -> SHA), so
+      # re-attaching the dispatch branch at this exact commit changes NO
+      # code content — HEAD stays on the identical tree, and the run still
+      # executes the newest pushed code. It only gives the status steps a
+      # real branch to commit to and push. If the branch has moved forward
+      # since click time, the rebase-then-push retry in the status steps
+      # carries this commit onto the new tip; the code this run EXECUTES
+      # is unaffected (the tree is already checked out).
+      #
+      # A branch-based checkout is already attached; a SHA-pinned current-code
+      # checkout is safely re-attached here solely for later status commits.
+      # ---------------------------------------------------------------------
+      - name: Re-attach HEAD to the dispatch branch when the checkout pinned a SHA
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if git symbolic-ref -q HEAD > /dev/null; then
+            echo "HEAD is on branch '$(git symbolic-ref --short HEAD)' — nothing to do."
+            exit 0
+          fi
+          # This run deliberately executed current default-branch code, so
+          # attach status commits to that same branch rather than a historical
+          # event ref or an assumed literal branch name.
+          branch="${DEFAULT_BRANCH:?repository default branch is required}"
+          echo "HEAD is detached at $(git rev-parse HEAD) (code_ref-pinned restart checkout)."
+          echo "Re-attaching branch '$branch' at this exact commit so status commits can be pushed."
+          # Fetch the branch's remote-tracking ref explicitly: a SHA-pinned
+          # checkout does not necessarily create refs/remotes/origin/<branch>.
+          git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+          # Create/reset the local branch AT THE PINNED COMMIT (no content
+          # change) and wire its upstream so pull --rebase / push work.
+          git checkout -B "$branch" HEAD
+          git branch --set-upstream-to="origin/$branch" "$branch"
+          echo "Now on branch '$branch' at $(git rev-parse HEAD) (upstream: origin/$branch)."
+
+      - name: Resolve inputs
+        id: jid
+        shell: bash
+        run: |
+          set -euo pipefail
+          jid="${{ github.event.inputs.job_id }}"
+          jid="$(echo "$jid" | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
+          echo "job_id=$jid" >> "$GITHUB_OUTPUT"
+          echo "release_tag=clipforge-$jid" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Install ffmpeg
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y ffmpeg
+
+      - name: Verify ffmpeg installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffmpeg -version | head -n 1
+
+      - name: Install Python deps
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Edge TTS is a small Python dependency and requires no API key.
+          # Standard modern pip / setuptools / wheel are enough for the
+          # remaining stack and for the Edge online synthesis client.
+          python -m pip install --upgrade pip wheel setuptools
+          pip install -r scripts/requirements.txt
+
+      - name: Write stage_b_running status
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/write_status.py "${{ steps.jid.outputs.job_id }}" "stage_b_running" \
+            --message "Stage B started: producing final video (voiceover, music, subtitles)" \
+            --release-tag "${{ steps.jid.outputs.release_tag }}" \
+            --extra "music_ref=${{ github.event.inputs.music_ref }}" \
+            --extra "workflow_run_id=${{ github.run_id }}" \
+            --extra "workflow_run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --extra "workflow_phase=stage_b"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash || true
+          git add "jobs/${{ steps.jid.outputs.job_id }}/status.json"
+          git commit -m "clipforge: job ${{ steps.jid.outputs.job_id }} stage B running" || echo "nothing to commit"
+          # Best-effort (the definitive status is written at the end), but
+          # with multiple tasks running concurrently a single retry is not
+          # always enough — loop with rebase so this task's stage_b_running
+          # status (which carries this run's workflow_run_id for live step
+          # tracking) reliably reaches origin even when another task's push
+          # lands first.
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push; then pushed=true; break; fi
+            echo "stage_b_running status push attempt $attempt failed — rebasing and retrying…" >&2
+            git pull --rebase --autostash || true
+            sleep 2
+          done
+          if [ "$pushed" != "true" ]; then
+            echo "WARN: stage_b_running status push failed after 3 attempts; the final status commit will carry it." >&2
+          fi
+
+      - name: Load release metadata (find original video asset)
+        id: relmeta
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.jid.outputs.release_tag }}"
+          repo="${GITHUB_REPOSITORY}"
+          json="$(gh api "repos/${repo}/releases/tags/${tag}")"
+          echo "$json" > work_release.json
+          rid="$(python -c "import json; print(json.load(open('work_release.json'))['id'])")"
+          echo "release_id=$rid" >> "$GITHUB_OUTPUT"
+          rurl="$(python -c "import json; print(json.load(open('work_release.json')).get('html_url',''))")"
+          echo "release_url=$rurl" >> "$GITHUB_OUTPUT"
+
+          # Pull original asset info by name prefix.
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          data = json.load(open("work_release.json"))
+          for a in data.get("assets", []):
+              if a["name"].startswith("original."):
+                  print(f"orig_name={a['name']}")
+                  print(f"orig_url={a['browser_download_url']}")
+                  print(f"orig_id={a['id']}")
+                  break
+          PY
+
+      - name: Download original video from release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          # Use gh api with Accept: octet-stream to download the private asset.
+          orig_id="${{ steps.relmeta.outputs.orig_id }}"
+          orig_name="${{ steps.relmeta.outputs.orig_name }}"
+          if [ -z "$orig_id" ] || [ -z "$orig_name" ]; then
+            echo "Could not find original video asset in release" >&2
+            exit 1
+          fi
+          gh api -H "Accept: application/octet-stream" \
+            "repos/${GITHUB_REPOSITORY}/releases/assets/${orig_id}" \
+            > "work/${orig_name}"
+          ls -lh "work/${orig_name}"
+          echo "ORIGINAL_PATH=work/${orig_name}" >> "$GITHUB_ENV"
+
+      - name: Resolve production.json
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ref="${{ github.event.inputs.production_ref }}"
+          jid="${{ steps.jid.outputs.job_id }}"
+
+          # Support placeholder <JOB_ID> in the default form
+          ref="${ref//<JOB_ID>/$jid}"
+
+          case "$ref" in
+            path:*)
+              src="${ref#path:}"
+              if [ ! -f "$src" ]; then
+                echo "production.json not found at repo path: $src" >&2
+                exit 1
+              fi
+              cp "$src" work/production.json
+              ;;
+            url:*)
+              src="${ref#url:}"
+              curl -fSL --retry 3 -o work/production.json "$src"
+              ;;
+            asset:*)
+              name="${ref#asset:}"
+              tag="${{ steps.jid.outputs.release_tag }}"
+              aid="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" \
+                    --jq ".assets[] | select(.name==\"$name\") | .id")"
+              if [ -z "$aid" ]; then
+                echo "asset not found: $name" >&2; exit 1
+              fi
+              gh api -H "Accept: application/octet-stream" \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${aid}" \
+                > work/production.json
+              ;;
+            *)
+              echo "Unknown production_ref format: $ref" >&2; exit 1;;
+          esac
+
+          echo "production.json head:"
+          head -c 400 work/production.json; echo
+
+          # Series Mode is opt-in per persisted Stage A request. When enabled,
+          # reject a plan that omits its mandatory boundary metadata or claims a
+          # different series/part/start timestamp before any render work begins.
+          JID="$jid" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from scripts.production_plan_contract import validate_production_plan
+          jid = os.environ['JID']
+          plan = json.loads(Path('work/production.json').read_text(encoding='utf-8'))
+          request_path = Path('jobs') / jid / 'stage_a_request.json'
+          request = json.loads(request_path.read_text(encoding='utf-8')) if request_path.exists() else {}
+          errors = validate_production_plan(plan)
+          if request.get('series_mode') == 'true':
+              expected = {'series_id': request.get('series_id'), 'series_part': int(request.get('series_part') or 0), 'series_start_seconds': int(request.get('series_start_seconds') or -1)}
+              for key, value in expected.items():
+                  if plan.get(key) != value:
+                      errors.append(f'Series metadata mismatch for {key}: expected {value!r}.')
+          if errors:
+              raise SystemExit('Invalid production.json:\n- ' + '\n- '.join(errors))
+          PY
+
+          # Extract the one-per-job title the analysis agent put in
+          # production.json (see generate_analysis_prompt.py). Optional: a
+          # missing/blank title exports an empty string and the rest of
+          # the pipeline ships without a title line.
+          JOB_TITLE=$(python -c 'import json; print((json.load(open("work/production.json")).get("title") or "").strip())')
+          echo "JOB_TITLE=$JOB_TITLE" >> "$GITHUB_ENV"
+
+          if [ -n "$JOB_TITLE" ]; then
+            echo "Job title: $JOB_TITLE"
+          else
+            echo "No top-level title in production.json (optional field)."
+          fi
+
+      - name: Resolve optional background music
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ref="${{ github.event.inputs.music_ref }}"
+          jid="${{ steps.jid.outputs.job_id }}"
+
+          # Empty music_ref = no music for this job (the default path).
+          if [ -z "$ref" ]; then
+            echo "No music_ref supplied — final video ships without background music."
+            exit 0
+          fi
+
+          ref="${ref//<JOB_ID>/$jid}"
+
+          case "$ref" in
+            path:*)
+              src="${ref#path:}"
+              if [ ! -f "$src" ]; then
+                echo "music file not found at repo path: $src" >&2
+                exit 1
+              fi
+              cp "$src" work/music.mp3
+              ;;
+            url:*)
+              src="${ref#url:}"
+              curl -fSL --retry 3 -o work/music.mp3 "$src"
+              ;;
+            asset:*)
+              name="${ref#asset:}"
+              tag="${{ steps.jid.outputs.release_tag }}"
+              aid="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" \
+                    --jq ".assets[] | select(.name==\"$name\") | .id")"
+              if [ -z "$aid" ]; then
+                echo "music asset not found: $name" >&2; exit 1
+              fi
+              gh api -H "Accept: application/octet-stream" \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${aid}" \
+                > work/music.mp3
+              ;;
+            *)
+              echo "Unknown music_ref format: $ref" >&2; exit 1;;
+          esac
+
+          ls -lh work/music.mp3
+          echo "MUSIC_PATH=work/music.mp3" >> "$GITHUB_ENV"
+
+      # -------------------------------------------------------------------
+      # Persistent creator watermark. The profile UI writes only a display
+      # name to branding/creator_watermark.json; it lives outside jobs/ so
+      # cleanup never removes it. The name is normalized into a local work
+      # file, avoiding unsafe interpolation into the workflow environment.
+      # -------------------------------------------------------------------
+      - name: Load creator watermark (branding/creator_watermark.json)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          name = ""
+          path = Path("branding/creator_watermark.json")
+          try:
+              doc = json.loads(path.read_text(encoding="utf-8"))
+              raw = doc.get("creator_name", "")
+              if isinstance(raw, str):
+                  name = " ".join(raw.split())[:64]
+              else:
+                  print("creator_watermark.json creator_name is not a string — rendering no watermark")
+          except FileNotFoundError:
+              print("creator_watermark.json not found — rendering no watermark")
+          except Exception as error:
+              print(f"creator_watermark.json unreadable ({error}) — rendering no watermark")
+          Path("work").mkdir(exist_ok=True)
+          Path("work/creator_watermark_name.txt").write_text(name, encoding="utf-8")
+          print("Creator watermark configured:" if name else "No creator watermark configured.", name)
+          PY
+
+      # -------------------------------------------------------------------
+      # New one-pass pipeline: voiceover -> cut+mix+merge -> subtitles.
+      # generate_voiceover.py    : Edge TTS per cut + manifest.
+      # cut_and_produce.py       : timing reconciliation, mute source audio,
+      #                            mix voiceover (+ optional music), ONE
+      #                            merged mobile-safe MP4 + merged voiceover.
+      # generate_subtitles_cinematic.py: transcribe the merged voiceover,
+      #                            align authoritative script text, and render
+      #                            cinematic sentence captions.
+      # -------------------------------------------------------------------
+      - name: Generate voiceover (Edge TTS, one clip per cut)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Edge TTS uses the saved, non-secret narrator selection in
+          # branding/tts_settings.json. A missing or invalid setting safely
+          # falls back to the catalog's neutral Andrew default.
+          mkdir -p work/voiceover
+          python scripts/generate_voiceover.py \
+            work/production.json \
+            work/voiceover
+          # List only file names + sizes; no settings payload is logged.
+          ls -lh work/voiceover/
+
+      - name: Cut, reconcile timing, mix voiceover (+music), merge to ONE MP4
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/out
+          MUSIC_ARG=()
+          if [ -n "${MUSIC_PATH:-}" ]; then
+            MUSIC_ARG=(--music "$MUSIC_PATH")
+          fi
+          python scripts/cut_and_produce.py \
+            "$ORIGINAL_PATH" \
+            work/production.json \
+            work/voiceover/voiceover_manifest.json \
+            work/out/final.mp4 \
+            --voiceover-wav work/out/voiceover.wav \
+            "${MUSIC_ARG[@]}"
+          ls -lh work/out/
+
+      # -------------------------------------------------------------------
+      # Quality enhancement filter chain (optional), now applied to the ONE
+      # merged final.mp4 (enhance_scenes.py picks up final.mp4 in the
+      # directory it is given). Same toggle contract as before: the
+      # `enhance` workflow_dispatch input maps 1:1 to the site's on/off
+      # toggle. 'false' short-circuits the script to a no-op.
+      # -------------------------------------------------------------------
+      - name: Quality enhancement (denoise + color grade + sharpen)
+        shell: bash
+        env:
+          ENHANCE_FLAG: ${{ github.event.inputs.enhance }}
+        run: |
+          set -euo pipefail
+          flag="${ENHANCE_FLAG:-true}"
+          case "$flag" in
+            true|1|yes|on|True|TRUE)  enable_arg="--enabled" ;;
+            false|0|no|off|False|FALSE) enable_arg="--no-enabled" ;;
+            *)
+              echo "Unrecognised enhance flag: '$flag' — defaulting to enabled." >&2
+              enable_arg="--enabled"
+              ;;
+          esac
+          echo "Quality enhancement flag: $flag -> $enable_arg"
+          python scripts/enhance_scenes.py work/out "$enable_arg"
+
+      # -------------------------------------------------------------------
+      # Cinematic captions are the only subtitle path. They are burned into
+      # the merged final.mp4 and render the final bare 1080x1200 (10:9)
+      # presentation: scene-level crop, sentence captions, and title banner.
+      # -------------------------------------------------------------------
+      - name: Burn cinematic subtitles into the final video
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --script-json supplies the authoritative voiceover_text. The
+          # transcribed merged voiceover supplies word timing only.
+          python scripts/generate_subtitles_cinematic.py \
+            work/out/final.mp4 \
+            work/out/voiceover.wav \
+            work/out/final_subtitled.mp4 \
+            --script-json work/production.json
+          mv -f work/out/final_subtitled.mp4 work/out/final.mp4
+          ls -lh work/out/
+
+      # -------------------------------------------------------------------
+      # The creator watermark is the final visual operation after captions.
+      # It is burned into final.mp4 itself, then survives the existing terminal
+      # delivery compression that follows. An empty profile name is an explicit
+      # no-op; it never attempts to render empty text.
+      # -------------------------------------------------------------------
+      - name: Burn creator watermark into final video
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="$(cat work/creator_watermark_name.txt 2>/dev/null || true)"
+          if [ -z "$name" ]; then
+            echo "Creator watermark skipped: no configured name."
+            echo "CREATOR_WATERMARK_APPLIED=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          python scripts/apply_creator_watermark.py \
+            work/out/final.mp4 work/out/final_watermarked.mp4 --name "$name"
+          mv -f work/out/final_watermarked.mp4 work/out/final.mp4
+          echo "CREATOR_WATERMARK_APPLIED=true" >> "$GITHUB_ENV"
+          echo "Creator watermark burned into final video."
+
+      # -------------------------------------------------------------------
+      # Terminal delivery transform: the fully composited MP4 is encoded once
+      # more with quality-based CRF control. This happens after every visual
+      # and audio operation and before validation, packaging, and upload.
+      # -------------------------------------------------------------------
+      - name: Compress final video for delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/compress_final_video.py \
+            work/out/final.mp4 \
+            work/out/final_delivery.mp4
+          mv -f work/out/final_delivery.mp4 work/out/final.mp4
+          ls -lh work/out/final.mp4
+
+      - name: Validate the merged final MP4 with ffprobe
+        shell: bash
+        run: |
+          set -euo pipefail
+          FINAL=work/out/final.mp4
+          if [ ! -f "$FINAL" ]; then
+            echo "FAIL: no merged final.mp4 to validate" >&2
+            exit 1
+          fi
+          echo "=== $FINAL ==="
+          echo "--- ffprobe: format info ---"
+          ffprobe -v error -show_entries format=format_name,duration \
+            -of default=noprint_wrappers=1 "$FINAL"
+          echo "--- MP4 signature check ---"
+          python3 - "$FINAL" <<'PY'
+          import sys
+          with open(sys.argv[1], 'rb') as f:
+              sig = f.read(12)
+          if sig[4:8] != b'ftyp':
+              print(f'FAIL: {sys.argv[1]} is NOT a valid MP4 (missing ftyp box)', file=sys.stderr)
+              sys.exit(1)
+          print(f'PASS: {sys.argv[1]} has valid MP4 ftyp signature')
+          PY
+          echo "--- ffprobe: stream summary ---"
+          ffprobe -v error -show_entries "stream=codec_type,codec_name,width,height" \
+            -of default=noprint_wrappers=1 \
+            "$FINAL"
+
+      # -------------------------------------------------------------------
+      # Social-media metadata TXT (title + hashtags + YouTube tags).
+      #
+      # The AUTHORITATIVE source of these values is the same production.json
+      # already resolved above — the analysis agent that writes the cuts +
+      # per-job `title` also writes the sibling `hashtags` array and
+      # `youtube_tags` array (see the POSTING PACKAGE METADATA section of
+      # 00_READ_THIS_FIRST.txt). We do NOT regenerate them here; we read
+      # them straight out of production.json and format them into a clean,
+      # copy-friendly TXT that ships next to final.mp4 inside the final
+      # ZIP.
+      #
+      # All three fields are OPTIONAL for backwards compatibility with
+      # older production.json files that pre-date the posting package.
+      # Any missing/empty field is written as a blank section so the file
+      # structure stays predictable and easy to copy from.
+      # -------------------------------------------------------------------
+      - name: Write social-media metadata.txt from production.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/out
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          doc = json.loads(Path("work/production.json").read_text(encoding="utf-8"))
+
+          title = (doc.get("title") or "")
+          if isinstance(title, str):
+              title = title.strip()
+          else:
+              title = ""
+
+          def clean_str_list(value):
+              if not isinstance(value, list):
+                  return []
+              out = []
+              for entry in value:
+                  if isinstance(entry, str):
+                      s = entry.strip()
+                      if s:
+                          out.append(s)
+              return out
+
+          hashtags = clean_str_list(doc.get("hashtags"))
+          youtube_tags = clean_str_list(doc.get("youtube_tags"))
+
+          # Hashtags: space-separated on one line for a social-platform caption.
+          hashtag_line = " ".join(hashtags)
+          # YouTube tags: comma-separated on one line — the exact form the
+          # YouTube upload flow accepts in its "Tags" field.
+          youtube_tag_line = ", ".join(youtube_tags)
+
+          lines = [
+              "TITLE:",
+              title,
+              "",
+              "HASHTAGS:",
+              hashtag_line,
+              "",
+              "YOUTUBE TAGS:",
+              youtube_tag_line,
+              "",
+          ]
+          Path("work/out/metadata.txt").write_text(
+              "\n".join(lines), encoding="utf-8"
+          )
+
+          print("metadata.txt written:")
+          print("  title       :", repr(title))
+          print("  hashtags    :", len(hashtags), "entr(y|ies)")
+          print("  youtube_tags:", len(youtube_tags), "entr(y|ies)")
+          PY
+          echo "--- metadata.txt ---"
+          cat work/out/metadata.txt
+          echo "--- end metadata.txt ---"
+
+      - name: Zip final artifact (finished video + metadata.txt)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd work/out
+          # Sanity check both artifacts exist before zipping — a missing
+          # metadata.txt would silently ship a video-only ZIP again.
+          test -f final.mp4    || { echo "FAIL: final.mp4 missing"    >&2; exit 1; }
+          test -f metadata.txt || { echo "FAIL: metadata.txt missing" >&2; exit 1; }
+          zip -q "clipforge-${{ steps.jid.outputs.job_id }}-final.zip" \
+            final.mp4 metadata.txt
+          echo "Zip contents:"
+          unzip -l "clipforge-${{ steps.jid.outputs.job_id }}-final.zip"
+          # Verify BOTH expected members are present inside the ZIP — a
+          # regression that dropped metadata.txt would slip past 'zip -q'
+          # otherwise.
+          unzip -l "clipforge-${{ steps.jid.outputs.job_id }}-final.zip" | grep -q ' final.mp4$'    || { echo "FAIL: final.mp4 missing from final ZIP" >&2;    exit 1; }
+          unzip -l "clipforge-${{ steps.jid.outputs.job_id }}-final.zip" | grep -q ' metadata.txt$' || { echo "FAIL: metadata.txt missing from final ZIP" >&2; exit 1; }
+          ls -lh
+          echo "FINAL_ZIP=work/out/clipforge-${{ steps.jid.outputs.job_id }}-final.zip" >> "$GITHUB_ENV"
+
+      # -------------------------------------------------------------------
+      # NOTE: the original.<ext> release asset is intentionally NOT deleted
+      # here. It is the ONLY input the site's Stage B restart flow has to
+      # work with — restartStageB() in app.js re-dispatches stage-b.yml
+      # with the same job_id, and the "Load release metadata (find
+      # original video asset)" step above rediscovers original.<ext> on
+      # the same release tag. If we deleted it after a successful run,
+      # every subsequent restart would fail at that step with
+      # "Could not find original video asset in release" because there
+      # is no other authoritative copy of the source video (Stage A only
+      # publishes it as a release asset; there is no committed copy in
+      # jobs/<job_id>/ and the runner filesystem is ephemeral). The
+      # asset — like the rest of the release — is cleaned up wholesale
+      # by the hourly cleanup workflow 12 hours after job creation, so
+      # keeping it here does not leak storage; it just guarantees that
+      # Stage B can genuinely be restarted for the release's lifetime.
+      # -------------------------------------------------------------------
+
+      - name: Upload final zip + the finished video to the SAME release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.jid.outputs.release_tag }}
+          name: "ClipForge job ${{ steps.jid.outputs.job_id }}"
+          body: |
+            ClipForge output.
+
+            clipforge-job-id: ${{ steps.jid.outputs.job_id }}
+            stage: complete
+
+            Final artifacts (ONE finished, ready-to-post video +
+            social-media metadata):
+              - final.mp4 — the merged video: all cuts concatenated,
+                voiceover mixed in (source audio muted), word-by-word
+                subtitles burned in, optional background music ducked
+                under the voiceover when one was uploaded.
+              - metadata.txt — the posting package: the one-per-job
+                title, hashtags, and YouTube tags generated for this
+                specific video (sourced verbatim from production.json).
+              - clipforge-${{ steps.jid.outputs.job_id }}-final.zip
+                (contains final.mp4 + metadata.txt)
+
+            This release is automatically deleted 12 hours after creation.
+          make_latest: "false"
+          prerelease: true
+          files: |
+            ${{ env.FINAL_ZIP }}
+            work/out/final.mp4
+            work/out/metadata.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve final asset URLs
+        id: finalasset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.jid.outputs.release_tag }}"
+          url="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" \
+                --jq ".assets[] | select(.name | endswith(\"-final.zip\")) | .browser_download_url")"
+          echo "final_url=$url" >> "$GITHUB_OUTPUT"
+          mp4="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" \
+                --jq ".assets[] | select(.name == \"final.mp4\") | .browser_download_url")"
+          echo "final_mp4_url=$mp4" >> "$GITHUB_OUTPUT"
+
+      - name: Write complete status
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/write_status.py "${{ steps.jid.outputs.job_id }}" "complete" \
+            --message "Final video is ready (one merged MP4 with voiceover and subtitles)." \
+            --release-tag "${{ steps.jid.outputs.release_tag }}" \
+            --release-url "${{ steps.relmeta.outputs.release_url }}" \
+            --asset "final_zip=${{ steps.finalasset.outputs.final_url }}" \
+            --asset "final_mp4=${{ steps.finalasset.outputs.final_mp4_url }}"
+
+          # Merge the job title + creator watermark state into status.json
+          # (same inline-merge pattern Stage A uses for the asset URLs).
+          JID="${{ steps.jid.outputs.job_id }}" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = Path("jobs") / os.environ["JID"] / "status.json"
+          data = json.loads(p.read_text())
+          extra = data.setdefault("extra", {})
+          title = (os.environ.get("JOB_TITLE") or "").strip()
+          if title:
+              extra["title"] = title
+          name_path = Path("work/creator_watermark_name.txt")
+          creator_name = name_path.read_text(encoding="utf-8").strip() if name_path.exists() else ""
+          extra["creator_watermark_applied"] = (
+              os.environ.get("CREATOR_WATERMARK_APPLIED", "false").lower() == "true"
+          )
+          if creator_name:
+              extra["creator_watermark_name"] = creator_name
+          p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+          PY
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash || true
+          git add "jobs/${{ steps.jid.outputs.job_id }}/status.json"
+          git commit -m "clipforge: job ${{ steps.jid.outputs.job_id }} complete" || echo "nothing to commit"
+          # Persisting the complete status is a HARD requirement — a Stage B
+          # run that produced the final video must not be reported as failed
+          # merely because this push raced another commit (e.g. the hourly
+          # cleanup job, or a site-side upload) or because the branch moved
+          # since a restart pinned its SHA. Rebase onto the latest branch
+          # tip and retry; only fail the step (loudly) if the status truly
+          # cannot be persisted.
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push; then
+              pushed=true
+              break
+            fi
+            echo "status push attempt $attempt failed — rebasing onto latest origin and retrying…" >&2
+            git pull --rebase --autostash
+            sleep 2
+          done
+          if [ "$pushed" != "true" ]; then
+            echo "FATAL: could not persist the complete status to origin after 3 attempts." >&2
+            exit 1
+          fi
+        env:
+          JOB_TITLE: ${{ env.JOB_TITLE }}
+
+      - name: Continue the next validated Series Mode part
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JOB_ID: ${{ steps.jid.outputs.job_id }}
+        run: |
+          set -euo pipefail
+          test -f "jobs/$JOB_ID/production.json" || exit 0
+          python scripts/series_state.py . "$JOB_ID" > work/series_next.json
+          python - <<'PY'
+          import json, os, subprocess
+          payload = json.load(open("work/series_next.json", encoding="utf-8"))
+          if not payload.get("continue"):
+              print("Series is not enabled or this was the final part; no continuation dispatched.")
+              raise SystemExit(0)
+          required = ("job_id", "video_url", "series_id", "series_source_job_id", "series_part", "series_start_seconds")
+          if any(not str(payload.get(key, "")).strip() for key in required):
+              raise SystemExit("Series continuation payload is incomplete.")
+          from pathlib import Path
+          request_path = Path("jobs") / payload["job_id"] / "stage_a_request.json"
+          if request_path.exists():
+              print(f"Series continuation {payload['job_id']} was already persisted; skipping duplicate dispatch.")
+              raise SystemExit(0)
+          request_path.parent.mkdir(parents=True, exist_ok=True)
+          request_path.write_text(json.dumps({"version": 1, **payload}, indent=2) + "\n", encoding="utf-8")
+          subprocess.run(["git", "add", str(request_path)], check=True)
+          # Automatic-continuation parity with the browser/bot dispatch: the
+          # Automatic Mode music choice is stored PER JOB ID
+          # (jobs/<job_id>/automatic_music.json) and Stage A resolves it at
+          # analysis time, so part 1's choice would silently revert to the
+          # shared default for every continued part unless it is copied
+          # forward here. A one-off uploaded track (path:jobs/<part1>/music.mp3)
+          # is deliberately NOT copied: read_automatic_music.py rejects
+          # another job's one-off path, so those fall back to the default.
+          choice_path = Path("jobs") / os.environ["JOB_ID"] / "automatic_music.json"
+          if choice_path.exists():
+              document = json.loads(choice_path.read_text(encoding="utf-8"))
+              music_ref = str(document.get("music_ref") or "")
+              if not music_ref or music_ref.startswith("path:audio-library/"):
+                  document["job_id"] = payload["job_id"]
+                  next_choice = request_path.parent / "automatic_music.json"
+                  next_choice.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+                  subprocess.run(["git", "add", str(next_choice)], check=True)
+                  print(f"Carried the Automatic Mode music choice forward to {payload['job_id']}.")
+              else:
+                  print("Part 1 used a one-off music upload; it cannot be reused across jobs, so the next part falls back to the shared default.")
+          subprocess.run(["git", "commit", "-m", f"clipforge: queue series part {payload['series_part']}"], check=True)
+          subprocess.run(["git", "push"], check=True)
+          command = ["gh", "workflow", "run", "stage-a.yml", "--repo", os.environ["GITHUB_REPOSITORY"], "--ref", os.environ.get("GITHUB_REF_NAME", "main")]
+          for key, value in payload.items():
+              if key != "continue":
+                  command.extend(["-f", f"{key}={value}"])
+          subprocess.run(command, check=True)
+          print(f"Dispatched Series Mode Part {payload['series_part']} as {payload['job_id']}.")
+          PY
+
+      # -------------------------------------------------------------------
+      # OPTIONAL DISTRIBUTION — Stage B has already produced, validated,
+      # released, and persisted the final output above. This best-effort
+      # dispatch intentionally cannot change the successful Stage B outcome.
+      # It delegates the actual platform publication to zernio-publish.yml,
+      # which uses the separate ZERNIO_API_KEY Actions secret.
+      # -------------------------------------------------------------------
+      - name: Optionally dispatch automatic Zernio publishing
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JOB_ID: ${{ steps.jid.outputs.job_id }}
+        run: |
+          set -euo pipefail
+          settings="branding/zernio_settings.json"
+          if [ ! -f "$settings" ]; then
+            echo "Zernio is not configured; skipping automatic publishing."
+            exit 0
+          fi
+          # zernio_targets.py validates the target groups and produces compact
+          # JSON before base64 transport. This avoids ever asking the shell to
+          # parse JSON assignments, which strips their required quote marks.
+          IFS=$'\t' read -r SKIP MODE TIMEZONE TARGETS_JSON_B64 < <(
+            python scripts/zernio_targets.py automatic-fields "$settings"
+          )
+          if [ "${SKIP:-true}" = "true" ]; then
+            echo "Zernio automatic publishing is disabled or has no selected accounts; skipping."
+            exit 0
+          fi
+          # Decode and validate with the same helper; TARGETS_JSON is now the
+          # exact compact JSON string passed through workflow_dispatch.
+          export TARGETS_JSON="$(python scripts/zernio_targets.py decode "$TARGETS_JSON_B64")"
+          echo "Dispatching the separate Zernio workflow in mode $MODE."
+          # Do not allow a dispatch, configuration, or provider outage to alter
+          # Stage B's successful media outcome. The publishing workflow writes
+          # its own sibling state under status.json.
+          gh workflow run zernio-publish.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "${{ github.event.repository.default_branch }}" \
+            -f action=publish \
+            -f job_id="$JOB_ID" \
+            -f mode="$MODE" \
+            -f timezone="$TIMEZONE" \
+            -f targets_json="$TARGETS_JSON" \
+            -f request_id="clipforge-auto-$JOB_ID-$GITHUB_RUN_ID" \
+            || echo "WARN: automatic Zernio dispatch failed; final video remains complete and available." >&2
+
+      - name: On failure, write error status
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/write_status.py "${{ steps.jid.outputs.job_id }}" "error" \
+            --message "Stage B failed. See workflow run for logs." \
+            --release-tag "${{ steps.jid.outputs.release_tag }}" \
+            --extra "workflow_phase=stage_b" || true
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash || true
+          git add "jobs/${{ steps.jid.outputs.job_id }}/status.json" || true
+          git commit -m "clipforge: job ${{ steps.jid.outputs.job_id }} error (stage B)" || true
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push; then pushed=true; break; fi
+            git pull --rebase --autostash || true
+            sleep 2
+          done
+          true
+
+  stage_b_cancelled:
+    name: Record Stage B cancellation
+    needs: stage_b
+    if: ${{ cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Ensure HEAD is on a branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git symbolic-ref -q HEAD > /dev/null; then
+            echo "HEAD is on branch '$(git symbolic-ref --short HEAD)' — nothing to do."
+            exit 0
+          fi
+          branch="${GITHUB_REF#refs/heads/}"
+          if [ "$branch" = "$GITHUB_REF" ] || [ -z "$branch" ]; then
+            branch="main"
+          fi
+          git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+          git checkout -B "$branch" HEAD
+          git branch --set-upstream-to="origin/$branch" "$branch"
+      - name: Write cancelled status
+        shell: bash
+        run: |
+          set -euo pipefail
+          jid="${{ github.event.inputs.job_id }}"
+          jid="$(echo "$jid" | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
+          python scripts/write_status.py "$jid" "cancelled" \
+            --message "Stage B was cancelled." \
+            --release-tag "clipforge-$jid" \
+            --extra "workflow_run_id=${{ github.run_id }}" \
+            --extra "workflow_run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash || true
+          git add "jobs/$jid/status.json"
+          git commit -m "clipforge: job $jid stage B cancelled" || echo "nothing to commit"
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push; then pushed=true; break; fi
+            git pull --rebase --autostash || true
+            sleep 2
+          done
+          true

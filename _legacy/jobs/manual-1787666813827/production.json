@@ -1,0 +1,146 @@
+{
+  "video_duration_seconds": 1686,
+  "series_id": "manual-1787666813827",
+  "series_part": 1,
+  "series_start_seconds": 0,
+  "series_end_seconds": 1086,
+  "series_final": false,
+  "series_summary": "After an aspiring young footballer pays for a stranger's bread, she tracks him down and tends to his severe injury—bringing him into her home late at night.",
+  "title": "A Stranger's Kindness Leads To Danger Part 1",
+  "hashtags": [
+    "#nollywood",
+    "#shortfilm",
+    "#drama",
+    "#kindness",
+    "#football",
+    "#relatable"
+  ],
+  "youtube_tags": [
+    "nollywood drama",
+    "african movie",
+    "short story",
+    "football player injury",
+    "kindness rewarded",
+    "mimi and gerald",
+    "secret relationship",
+    "viral drama skit",
+    "african short film",
+    "unexpected kindness"
+  ],
+  "cuts": [
+    {
+      "start_seconds": 29,
+      "end_seconds": 58,
+      "voiceover_text": "An everyday trip to the local market turns into an awkward standoff when Mimi discovers she is completely out of cash to buy bread. The vendor demands payment, leaving her stranded in embarrassment at the counter. Just as she is about to walk away empty-handed, a quiet young stranger steps forward without hesitation. He hands his own cash directly to the seller, telling Mimi she can simply repay him whenever she sees him next. Mimi watches him walk off in complete disbelief, deeply moved by the unexpected kindness.",
+      "keywords": [
+        {
+          "word": "embarrassment",
+          "color": "#FF5C5C"
+        },
+        {
+          "word": "stranger",
+          "color": "#FFA500"
+        },
+        {
+          "word": "kindness",
+          "color": "#00FF7F"
+        }
+      ]
+    },
+    {
+      "start_seconds": 252,
+      "end_seconds": 280,
+      "voiceover_text": "Unable to stop thinking about the kind stranger who rescued her from public embarrassment, Mimi returns to the roadside kiosk determined to track him down. She approaches the vendor and eagerly asks if the young man has stopped by again. When the woman admits she has not seen him since that afternoon, Mimi quickly writes down her personal phone number. She pleads with the seller to pass it to him the moment he returns, desperate for any chance to thank him properly face to face.",
+      "keywords": [
+        {
+          "word": "determined",
+          "color": "#00E5FF"
+        },
+        {
+          "word": "pleads",
+          "color": "#FFD700"
+        }
+      ]
+    },
+    {
+      "start_seconds": 356,
+      "end_seconds": 384,
+      "voiceover_text": "Days later, fate steps in when Mimi spots the familiar young man walking down the neighborhood street with a football tucked beneath his arm. She rushes over to confront him with a wide smile, playfully teasing him about whether he remembers her from the bread stall. The boy introduces himself as Gerald, a passionate nineteen-year-old player who confesses that football is the single biggest source of joy in his entire life. Mimi is instantly charmed by his warmth and asks to join him on the field.",
+      "keywords": [
+        {
+          "word": "Gerald",
+          "color": "#00E5FF"
+        },
+        {
+          "word": "charmed",
+          "color": "#FF69B4"
+        }
+      ]
+    },
+    {
+      "start_seconds": 620,
+      "end_seconds": 646,
+      "voiceover_text": "After spending the entire afternoon watching him play on the pitch, Gerald offers to walk Mimi back through the neighborhood streets. But when Mimi enthusiastically offers to escort him all the way to his front door, Gerald suddenly stops dead in his tracks. A wave of visible panic washes over his face as he admits that his strict uncle would cause immense trouble if he ever caught him bringing a girl home. Mimi accepts his apology, completely unaware of the danger looming ahead.",
+      "keywords": [
+        {
+          "word": "panic",
+          "color": "#FF3333"
+        },
+        {
+          "word": "trouble",
+          "color": "#FF9900"
+        }
+      ]
+    },
+    {
+      "start_seconds": 806,
+      "end_seconds": 836,
+      "voiceover_text": "At the next local match, Gerald puts on a dazzling performance on the field, dominating the opposition by scoring seven incredible goals. But his brilliant play draws intense resentment from a frustrated rival defender who cannot keep up. In a reckless moment of jealousy, the opponent charges in with a vicious tackle, smashing violently into Gerald's lower leg. Gerald collapses instantly onto the turf in unbearable agony, clutching his damaged ankle as his teammates gather around in utter shock. His football dreams suddenly hang by a thread.",
+      "keywords": [
+        {
+          "word": "jealousy",
+          "color": "#FF3333"
+        },
+        {
+          "word": "agony",
+          "color": "#FF0000"
+        },
+        {
+          "word": "shock",
+          "color": "#FFD700"
+        }
+      ]
+    },
+    {
+      "start_seconds": 840,
+      "end_seconds": 868,
+      "voiceover_text": "Seeing Gerald crippled with excruciating pain and terrified of how his harsh uncle will react, Mimi immediately rushes to his side on the field. She wraps his arm firmly over her shoulder to bear his weight, refusing to leave him alone in misery. Knowing he cannot survive the journey home in this crippled state, Mimi insists on guiding him straight to her own apartment so she can massage and treat the swelling before it ruins his leg for good. Gerald limps along beside her in desperate relief.",
+      "keywords": [
+        {
+          "word": "excruciating",
+          "color": "#FF3333"
+        },
+        {
+          "word": "relief",
+          "color": "#00FF7F"
+        }
+      ]
+    },
+    {
+      "start_seconds": 1055,
+      "end_seconds": 1086,
+      "voiceover_text": "Hours after treating his injury, the silence of the night is shattered when Gerald jolts awake in the dark at three in the morning. Realizing how late it has gotten, he panics and tries to limp toward the front door, terrified that his uncle will discover he stayed out. Mimi immediately steps in front of him, warning that the dark streets are far too dangerous and his leg is still severely damaged. She insists that he take her bedroom upstairs while she sleeps on the couch, leaving Gerald trapped in an impossible dilemma.",
+      "keywords": [
+        {
+          "word": "panics",
+          "color": "#FF3333"
+        },
+        {
+          "word": "dilemma",
+          "color": "#FFD700"
+        }
+      ]
+    }
+  ],
+  "target_total_duration_seconds": 180
+}

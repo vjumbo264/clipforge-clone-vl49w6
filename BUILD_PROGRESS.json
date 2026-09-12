@@ -1,0 +1,715 @@
+{
+ "version": 1,
+ "project": "clipforge-rebuild",
+ "purpose": "Resumable checkpoint for the multi-session ClipForge rebuild. A fresh session reads this file (after ARCHITECTURE.md) and knows exactly what is done, what is next, and what to watch out for — without any memory of prior sessions.",
+ "rules_for_future_sessions": {
+  "read_first": [
+   "ARCHITECTURE.md (in full)",
+   "BUILD_PROGRESS.json (this file, in full)"
+  ],
+  "update_on_every_push": true,
+  "update_policy": "After every meaningful increment you push, update current_phase, the matching phases[] entry, completed_work, next_action, and last_session. Never leave the repo pushed with a stale BUILD_PROGRESS.json.",
+  "never_edit": [
+   "ARCHITECTURE.md decisions (record disagreements in architecture_concerns instead)",
+   "_legacy/ contents",
+   "the two preserved subsystems' underlying logic except narrowly-scoped bug fixes (see ARCHITECTURE.md §9)"
+  ]
+ },
+ "current_phase": "narration_length_convergence (complete)",
+ "current_task": {
+  "task": "Restore duration_target_decouple fix (operator regretted rollback); keep series-reap expiry fix; sweep _legacy prompt generator",
+  "status": "complete",
+  "session": "restore-duration-fix-session-1"
+ },
+ "phases": [
+  {
+   "id": "architecture",
+   "title": "Stage 1 — Architecture design, legacy move, handoff artifacts",
+   "status": "complete",
+   "completed_in_session": "architecture-session-1",
+   "notes": "All pre-existing files moved to _legacy/ with structure preserved. ARCHITECTURE.md, BUILD_PROGRESS.json, NEXT_SESSION_PROMPT.md written at repo root."
+  },
+  {
+   "id": "contracts_and_schemas",
+   "title": "Schemas + shared validators + job state machine",
+   "status": "complete",
+   "completed_in_session": "contracts-session-1",
+   "deliverables": [
+    "schemas/job_status.schema.json",
+    "schemas/stage_a_request.schema.json",
+    "schemas/production_plan.schema.json",
+    "schemas/analysis_bundle.schema.json",
+    "pipeline/plan/schema.py (single production.json validator)",
+    "bot/src/plan.js (JS port of the same validator — must agree with schema.py)",
+    "pipeline/status.py status-writer module for jobs/<job_id>/status.json (schema per ARCHITECTURE.md §6.2)",
+    "bot/src/jobs.js job state machine read/write helpers (states per ARCHITECTURE.md §6.1)",
+    "unit tests proving schema.py and plan.js accept/reject identical documents"
+   ],
+   "notes": "All deliverables built and tested. See completed_work[1] for the full summary. Both validators pass 26 shared fixture cases with identical error sets. See architecture_concerns[0] for the one flag raised during this phase."
+  },
+  {
+   "id": "stage_b_render",
+   "title": "Stage B — render pipeline (voiceover, render, reframe, captions, watermark, enhance, compress)",
+   "status": "complete",
+   "deliverables": [
+    "pipeline/stage_b/voiceover.py (Edge TTS, curated voice catalog, 24kHz mono PCM contract)",
+    "pipeline/stage_b/render.py (mobile-safe single-pass render — see ARCHITECTURE.md §14)",
+    "pipeline/stage_b/reframe.py",
+    "pipeline/stage_b/captions.py",
+    "pipeline/stage_b/watermark.py",
+    "pipeline/stage_b/enhance.py",
+    "pipeline/stage_b/compress.py",
+    ".github/workflows/stage-b.yml (dispatchable by job_id + production_ref; writes status; publishes final.mp4/final.zip to the job release)"
+   ],
+   "notes": "All eight deliverables built and verified. Stage B boundary re-validates production.json via pipeline.plan.schema.validate_production_plan and accepts both plan shapes (nested series object OR flat series_* siblings; voiceover_text OR legacy raw_narration). Status written via pipeline.status before/after each risky step. Verified by 33 new unit tests plus a real-ffmpeg end-to-end smoke test (pipeline/tests/smoke_stage_b_local.py) that ran render -> enhance -> captions -> watermark -> compress -> package on synthetic media and produced a valid 1080x1200 H.264/yuv420p/30fps/AAC-LC faststart MP4. See completed_work entry.",
+   "completed_in_session": "stage-b-session-1"
+  },
+  {
+   "id": "stage_a_ingest_analyze",
+   "title": "Stage A — ingest + analyze (all source kinds EXCEPT the two preserved subsystems)",
+   "status": "complete",
+   "completed_in_session": "stage-a-session-1",
+   "deliverables": [
+    "pipeline/stage_a/ingest.py (url, drive, magnet, torrent_file)",
+    "pipeline/stage_a/transcribe.py (faster-whisper CPU)",
+    "pipeline/stage_a/scenes.py (shot boundaries, key moments, composites)",
+    "pipeline/stage_a/bundle.py (analysis bundle + 00_READ_THIS_FIRST.txt prompt generation)",
+    ".github/workflows/stage-a.yml (writes status at each step; torrent candidate flow with awaiting_torrent_selection)"
+   ],
+   "notes": "Port from _legacy/scripts/ (download_drive.py url/drive parts, magnet_source.py, torrent_source.py, transcribe.py, scene_index.py, build_key_moments.py, event_frames.py, generate_analysis_prompt.py). Telegram channel + relay sources are later phases."
+  },
+  {
+   "id": "automatic_mode",
+   "title": "Automatic mode — Gemini analysis producing a validated production.json",
+   "status": "complete",
+   "deliverables": [
+    "pipeline/plan/automatic.py (Gemini bounded tool-use analysis, multi-key rotation, validated against schemas/production_plan.schema.json)",
+    "stage-a.yml automatic branch (automatic_analysis_running state; dispatch Stage B on valid plan)"
+   ],
+   "notes": "pipeline/plan/automatic.py (bounded native tool-use Gemini analysis, multi-key rotation, fallback models, shared-contract validation), pipeline/plan/music.py (music ref resolution from stage-a-request), stage-a.yml automatic branch (automatic_analysis_running -> analysis -> stage_b_queued -> stage-b.yml dispatch), 19 new offline tests. Legacy visual_evidence/narration-coverage safety semantics preserved; validated via pipeline.plan.schema so an automatic plan can never pass here and fail Stage B.",
+   "completed_in_session": "automatic-mode-session-1"
+  },
+  {
+   "id": "bot_a_core",
+   "title": "Bot A — webhook, KV, crypto, home/tasks/settings, New-video wizard, manual handoff, status actions",
+   "status": "complete",
+   "deliverables": [
+    "bot/package.json, bot/wrangler.bot-a.jsonc",
+    "bot/src/index.js (webhook + router, private chats only, webhook-secret auth)",
+    "bot/src/crypto.js (AES-256-GCM credentials, per-chat AAD)",
+    "bot/src/storage.js (KV layer)",
+    "bot/src/github.js (dispatch, files, releases, sealed-secret upload, shadow-clone create/connect)",
+    "bot/src/commands/* per ARCHITECTURE.md §8 (exactly 6 commands: /start /new /tasks /done /settings /cancel)",
+    "New-video wizard (mode → source → focus → length → music → confirm)",
+    "Manual handoff: Get agent prompt + Upload production.json with validation"
+   ],
+   "notes": "All remaining steps built and tested. bot/src/wizard.js (pure wizard state machine: mode → source → focus → length → music → confirm, focus skipped for series per §8.4, source classification incl. §5 disabled-host rejection, library picker, §7.1 projection), bot/src/views.js (activeViewId self-editing view mechanic + §8.3 home + §8.6 settings composers), bot/src/runtime.js (userError, requireCredentials gate, §8.5 task status screen + state-valid contextual buttons), bot/src/commands/{start,new,tasks,done,settings,cancel}.js (all six §8.2 commands), bot/src/index.js (webhook entry: X-Telegram-Bot-Api-Secret-Token auth with 401 otherwise, private chats only, update dedupe; full wizard router incl. mode gate for Automatic without a Gemini key, .torrent staging ≤1 MB to jobs/<id>/source.torrent, §9.1 telegram_channel clone gate at source step AND re-checked at confirm, telegram_relay stubbed with a not-yet-built notice until the relay phase; confirm writes stage-a-request.json + queued status.json and dispatches stage-a.yml with code_ref; task actions: Get agent prompt (§8.7) + Upload production.json (paste or .json file, bot/src/plan.js §7.3 validation with specific errors, stage-b.yml dispatch with production_ref/music_ref/code_ref, stage_b_queued status write), restart Stage A / restart Stage B with fresh currentBranchSha (§8.5), Cancel Stage B (confirm → workflow cancel or terminal-state merge when no run id), Delete task (confirm → github.js deleteClipforgeJob + label removal), Download links, paginated torrent-file selection from jobs/<id>/torrent-selection.json (§5 preserved flow), onboarding (create Shadow Clone / connect existing with immediate secret-message deletion), settings sub-screens (Gemini sealed-secret upload + masked fingerprints, narrator select/preview, music library upload/preview/default/delete, watermark, series default; Zernio stubbed for its phase), bot/wrangler.bot-a.jsonc. Tests: bot/test/wizard.test.mjs 16 new cases (73 JS total, all pass); 56 Python tests all pass.",
+   "completed_in_session": "bot-a-session-2"
+  },
+  {
+   "id": "relay_subsystem",
+   "title": "PRESERVED SUBSYSTEM #2 — direct-video relay (Bot A → group → Bot B → telegram-relay.yml → MTProto download → clone handoff)",
+   "status": "complete",
+   "deliverables": [
+    "bot/src/relay.js + bot/src/relay-worker.js (Bot B)",
+    "bot/wrangler.bot-b.jsonc",
+    ".github/workflows/telegram-relay.yml",
+    "relay/telegram_relay.py",
+    "Bot A direct-video source kind wired into the New-video wizard"
+   ],
+   "notes": "All five deliverables built. bot/src/relay.js + bot/src/relay-worker.js (Bot B) ported essentially verbatim from _legacy/telegram-bot/src/ (caption/marker codecs, relevance gate before any KV access, sealed-payload state check). bot/wrangler.bot-b.jsonc copied. relay/mtproto_transfer.py extracted from _legacy/scripts/download_drive.py (bounded parallel transfer, unchanged). relay/telegram_relay.py ported with ONE deliberate adaptation: the sealed payload now carries the §7.1 NESTED stage_a_request document (stage_a_request key) instead of the legacy flat stage_a_inputs, and the write-back fills source.relay.{release_tag,expected_size_bytes,sha256} per schemas/stage_a_request.schema.json (cross-validated with jsonschema); Stage A dispatch inputs reduced to {job_id, code_ref} (the new stage-a.yml's only inputs). handoff_token (central repo uses its own github.token), local Bot API download path, 1800 MiB cap, prerelease temp asset + cleanup — all preserved. .github/workflows/telegram-relay.yml ported verbatim except script paths (scripts/ -> relay/). Bot A wired: wizard source step stages direct videos via copyMessage into the relay group (with migrate_to_chat_id supergroup fallback), confirm seals the AES-256-GCM envelope (AAD clipforge-telegram-relay:v1:<job>) containing the nested request, parks the ready record via putRelayJob, and posts the /relay@BotB ready marker; the clone's Stage A is dispatched by the central workflow, not Bot A. FOLLOW-UP recorded in architecture_concerns: ingest.py _gate_telegram_relay still fails closed for telegram_relay — replace it with the real relay-asset download (asset fetch + sha256 check) so relayed jobs can ingest.",
+   "completed_in_session": "relay-session-1"
+  },
+  {
+   "id": "telegram_channel_subsystem",
+   "title": "PRESERVED SUBSYSTEM #1 — public Telegram channel-link MTProto download (original repo only)",
+   "status": "complete",
+   "deliverables": [
+    "pipeline/stage_a/telegram_channel.py (MTProto download incl. bounded parallel transfer + single-connection fallback)",
+    "original-repo gate: Stage A re-verifies github.repository == motionssalt/clipforge and fails closed without the MTProto secrets",
+    "Bot A intake gate rejecting telegram_channel sources for clones (UX layer only)"
+   ],
+   "notes": "All three deliverables built and verified. pipeline/stage_a/telegram_channel.py ports the legacy MTProto public-channel download essentially verbatim (_download_telegram_mtproto wrapper, yt-dlp public-post fallback helper preserved for parity, bounded parallel transfer reused unchanged from relay/mtproto_transfer.py). Both §9.1 enforcement layers: server-side github.repository == motionssalt/clipforge check AND fail-closed on missing CLIPFORGE_TELEGRAM_* secrets. Bot A intake gate (source step + confirm re-check) was already built in bot_a_core. stage-a.yml passes the three secrets by name only to the ingest step and installs telethon/cryptg. ALSO closed the recorded relay follow-up: ingest.py _gate_telegram_relay replaced with the real relay-asset download (release clipforge-relay-input-<job> source_input.bin fetch, size + sha256 verification, partial-file cleanup). Full suite green: 116 Python tests (52 subtests) + 37 JS tests.",
+   "completed_in_session": "telegram-channel-session-1"
+  },
+  {
+   "id": "series_mode",
+   "title": "Series mode — continuation derivation + manual next-part button",
+   "status": "complete",
+   "deliverables": [
+    "pipeline/plan/series.py (next-part derivation from persisted series state)",
+    "Stage B continuation step for automatic series",
+    "Bot 'Start next part' action for manual series"
+   ],
+   "notes": "All three deliverables built and verified. pipeline/plan/series.py (port of _legacy/scripts/series_state.py onto the nested §7.1 request + §7.3/legacy-flat plan shapes, gap-proof 1..N history check, §6.3 id guard, music carry-forward policy mirroring the legacy automatic_music.json rule). stage-b.yml 'Continue the next validated Series Mode part' (automatic mode only; schema-validated request+status persistence, duplicate guard, rebase-retry push, stage-a.yml {job_id, code_ref} dispatch). Bot: bot/src/series.js + startNextSeriesPart replacing the task:next stub (manual mode). Tests: 23 new Python tests (115 total green) + 10 new JS tests (48 total green).",
+   "completed_in_session": "series-mode-session-1"
+  },
+  {
+   "id": "publish_zernio",
+   "title": "Publish — Zernio workflow + settings + per-post management",
+   "status": "complete",
+   "deliverables": [
+    "pipeline/publish/zernio.py",
+    ".github/workflows/publish.yml (discover/publish/retry/update/cancel; durable serial queue)",
+    "Bot Zernio settings screens + per-post actions on completed tasks"
+   ],
+   "notes": "Port from _legacy/scripts/zernio_*.py and _legacy/.github/workflows/zernio-publish.yml / zernio-manual-publish.yml. Publishing state lives in status.publishing, never moves a job out of complete. Step 6/6 (Stage B automatic-publish dispatch) completed in publish-zernio-session-3: pipeline.publish.zernio.automatic_dispatch + automatic-dispatch CLI (gate matrix: complete status -> armed settings -> ZERNIO_API_KEY configured -> active-account target resolution; reuse-on-failure idempotency key mirroring bot zernioRequestId; every skip is a clean no-op) and the \"Dispatch automatic Zernio publish when enabled\" step in stage-b.yml (after series continuation, before failure handler; dispatches publish.yml action=publish; can never fail a completed Stage B run).",
+   "completed_in_session": "publish-zernio-session-3"
+  },
+  {
+   "id": "background_workflows",
+   "title": "Background workflows — cleanup, deploy-bots, diagnostics",
+   "status": "complete",
+   "deliverables": [
+    ".github/workflows/cleanup.yml (hourly, TTL-based job+release expiry)",
+    ".github/workflows/deploy-bots.yml (deploy Bot A + Bot B on bot/** changes)",
+    ".github/workflows/diagnostics.yml (Gemini capability + Telegram intake checks)"
+   ],
+   "notes": "All three deliverables built and verified. cleanup.yml (hourly TTL sweep, §6.2 expires_at_epoch, stdlib-only pipeline/cleanup/expired.py + 21 tests), deploy-bots.yml (bot/** trigger, Node 22 npm ci + 75-test gate, wrangler deploy of Bot A + Bot B), diagnostics.yml (manual: Gemini capability check via pipeline/diagnostics/gemini.py — model candidates shared with pipeline.plan.automatic — + §9.1 Telegram intake positive/negative checks through the real ingest path; 12 new offline tests). This was the final phase of the §15 build order — all 10 phases are now complete.",
+   "completed_in_session": "background-workflows-session-2"
+  },
+  {
+   "id": "duration_target_decouple",
+   "title": "Duration-target decouple — reframe {target_duration} as narration-pacing only, in BOTH pipeline/plan/prompt.py (Location 1) and bot/src/index.js sendAgentPrompt (Location 2)",
+   "status": "complete",
+   "session": "duration-target-decouple-session-1",
+   "diagnosed_defect": "A numeric target attached to \"cuts\", \"video\", \"clip\", or \"output length\" anchors the planning model (Location 1) and the external hand-copy agent (Location 2) to shorten end_seconds to hit that number, truncating scenes before visual payoff. Fix is a narrow reframing: target_duration is now narration-pacing only; end_seconds selection is governed solely by the untouched PICKING end_seconds / NARRATION DURATION CONTRACT sections.",
+   "grep_patterns_used": [
+    "target_duration",
+    "target_total_duration_seconds",
+    "Target output length",
+    "Duration target",
+    "seconds of cuts combined",
+    "video_duration_seconds (as source-length disambiguation)",
+    "-second vertical clip",
+    "s vertical clip",
+    "second clip",
+    "sendAgentPrompt",
+    "Produce exactly one production.json",
+    "Write production.json"
+   ],
+   "files_to_fix": [
+    "pipeline/plan/prompt.py — FOCUS_DIRECTIVE line 105, NO_FOCUS_DIRECTIVE line 175, runtime-context table line 552, STEP 3 total-duration paragraph line ~783, production.json output contract line 1205",
+    "bot/src/index.js — sendAgentPrompt() prompt array line 1070, three copyPrompt fallbacks lines 1080/1082/1085",
+    "ARCHITECTURE.md line 430 — prose \"the duration target\" (ambiguous; reread-under-pressure treats as defect)"
+   ],
+   "files_touched_prose_check": [
+    "pipeline/plan/schema.py — field name only, legitimate (untouched)",
+    "bot/src/plan.js — field name only, legitimate (untouched)",
+    "schemas/production_plan.schema.json — field name only, legitimate (untouched)",
+    "pipeline/stage_b/common.py — field name only (untouched)",
+    "pipeline/stage_b/series_reconcile.py — field name only in DELIBERATE NON-GOALS list (untouched)",
+    "pipeline/plan/series.py — target_duration is a plumbing variable name for the stage-A-request field, not user-facing prose (untouched)",
+    "ARCHITECTURE.md line 471 — schema-field description \"required positive integers\" (untouched)",
+    "ARCHITECTURE.md line 612 — wizard-UI copy \"pick target duration: 30s · 60s · 120s …\" — this is the UI label the operator sees; it does not tell the planning model or the external agent that the number is a video length. Left untouched.",
+    "docs/HELP_GUIDE.md — outline only, no defect language (verified)",
+    "jobs/**/*.json, ARCHITECTURE.md schema example — persisted data with the field name, unchanged"
+   ],
+   "resume_from": null,
+   "completed_in_session": "duration-target-decouple-session-2",
+   "occurrences_fixed": {
+    "location_1_pipeline_plan_prompt_py": [
+     "FOCUS_DIRECTIVE point 8 (line 105): \"Duration target still applies (~{target_duration}s total)\" -> narration-length target, pacing only, explicit non-binding on end_seconds/footage, points back to PICKING end_seconds",
+     "NO_FOCUS_DIRECTIVE (line ~171): \"pad to the target duration\" -> \"pad the narration to the target length\"",
+     "NO_FOCUS_DIRECTIVE closing (line 181): \"The target duration remains about {target_duration}s\" -> narration-length target of SPOKEN NARRATION, subordinate, no bearing on end_seconds",
+     "Runtime-context table (line 562): \"Target output length: ~{target_duration} seconds of cuts combined\" -> \"Narration length target: ~{target_duration} seconds of SPOKEN NARRATION in total ... NOT the output video's length\"",
+     "STEP 3 total-duration paragraph (line ~797): \"Target the sum of (end - start) across all cuts at roughly {target_duration} seconds\" -> narration-pacing reframing; whole-cut selection and no-truncation rules preserved verbatim in meaning",
+     "Output contract (line 1222): target_total_duration_seconds field kept (schema name unchanged); added inline comment stating it is narration pacing only, not output video length"
+    ],
+    "location_2_bot_src_index_js_sendAgentPrompt": [
+     "prompt array (line 1070): \"Produce exactly one production.json for a ${target}-second vertical clip\" -> \"for a vertical clip\" + new line stating ~${target}s targets total SPOKEN NARRATION length only, never video length / cut length / end_seconds, with end_seconds anchored at full on-screen payoff",
+     "copyPrompt fallback 1 (line 1081): \"${target}s vertical clip\" -> \"vertical clip; ~${target}s paces narration only, not video length; end each cut at full visual payoff\" (focus+series variant)",
+     "copyPrompt fallback 2 (line 1083): same reframing (series-only variant)",
+     "copyPrompt fallback 3 (line 1086): same reframing (bare variant, 244 chars worst-case — under the 250/256 Telegram cap)"
+    ],
+    "additional_in_scope_hardening": [
+     "ARCHITECTURE.md line 430: \"the duration target\" -> \"the narration-length target (spoken-narration pacing only — never a video or cut length)\"",
+     "ARCHITECTURE.md line 612 wizard copy: \"pick target duration\" -> \"pick the target spoken-narration length (pacing only, never a video/cut length)\"",
+     "bot/src/wizard.js line 263 wizard step 3/5 label: \"Pick the target duration.\" -> \"Pick the target spoken-narration length (pacing only — footage runs as long as each scene needs).\""
+    ]
+   },
+   "occurrences_classified_legitimate": [
+    "pipeline/plan/schema.py, bot/src/plan.js, schemas/production_plan.schema.json: target_total_duration_seconds / video_duration_seconds field NAMES and positive-integer validation — untouched, both validators still agree (same keys, same error strings)",
+    "video_duration_seconds everywhere (stage_a/scenes.py, stage_b/*, schema validators, ARCHITECTURE.md): SOURCE video length — explicitly out of scope, untouched",
+    "target_duration_seconds plumbing (stage_a/ingest.py, stage_a/bundle.py, plan/series.py, bot/src/series.js, bot/src/wizard.js data field): request-field plumbing, not model-facing prose — untouched",
+    "pipeline/tests/fixtures/plan_cases.json + test_series/test_stage_b*/test_stage_a: fixture field names/values only — untouched",
+    "pipeline/stage_b/render.py comments about video_duration_seconds: source-length reconciliation, legitimate"
+   ],
+   "verification": {
+    "final_grep": "grep -rn -E 'Target output length|seconds of cuts combined|Duration target|duration target|target duration|total-duration target|-second vertical clip|s vertical clip|second clip' --include=*.py --include=*.js --include=*.json --include=*.md pipeline bot schemas docs ARCHITECTURE.md | grep -v jobs/",
+    "final_grep_result": "ZERO defect hits (exit 1) across both Location 1 and Location 2",
+    "sendAgentPrompt_four_strings": "all four confirmed corrected (lines 1070, 1081, 1083, 1086); copyPrompt fallbacks re-measured: v3 worst-case 244 chars (< 250 cap), cascade logic intact",
+    "location_2_standalone_reread": "each corrected sendAgentPrompt string was re-read standalone (no other file context): every variant itself states the number paces narration only, is not video length, and directs cut ends to full visual payoff — self-sufficient",
+    "plan_js_schema_py_agreement": "both validators untouched and still iterate the identical key tuple (video_duration_seconds, target_total_duration_seconds) with identical error text; cross-validator test pipeline/tests/test_plan_cross_validation.py passes (uses bot/test runner run_js_validator.mjs)",
+    "tests_python": "pipeline/tests: 367 passed; 9 failed of which 8 are pre-existing environment failures on pristine checkout (stage_b cascade/yolo assets, test_status) and 1 (test_prompt_word_budget_ordering.test_total_duration_hit_via_whole_cut_selection) asserted the OLD phrasing and was UPDATED to the new phrasing — now green; prompt/plan/series suites: 70 passed",
+    "tests_js": "bot npm test: 113 pass / 11 fail — byte-identical failure set on pristine checkout (pre-existing, unrelated to this phase)",
+    "tests_updated": [
+     "pipeline/tests/test_prompt_word_budget_ordering.py (WHOLE_CUT_MECHANISM constant + added NARRATION_ONLY_TARGET assertion)"
+    ]
+   },
+   "lines_changed": {
+    "pipeline/plan/prompt.py": [
+     105,
+     171,
+     181,
+     562,
+     797,
+     1222
+    ],
+    "bot/src/index.js": [
+     1070,
+     1081,
+     1083,
+     1086
+    ],
+    "bot/src/wizard.js": [
+     263
+    ],
+    "ARCHITECTURE.md": [
+     430,
+     612
+    ],
+    "pipeline/tests/test_prompt_word_budget_ordering.py": [
+     29,
+     99
+    ]
+   },
+   "completed_utc": "2026-09-10",
+   "rollback_note": "Operator reported the phase-2 reframing 'broke more problems than it fixed' (smoking gun). Rolled back pipeline/plan/prompt.py, bot/src/wizard.js, ARCHITECTURE.md and pipeline/tests/test_prompt_word_budget_ordering.py to their EXACT pre-phase state (verified: zero diff vs commit 630a8b6 for all four files; prompt.py retains only 630a8b6's JSON-only delivery line). KEPT per explicit operator instruction: bot/src/index.js sendAgentPrompt() — the Telegram tap-to-copy handoff message to the external agent keeps the narration-pacing framing in all four strings (full prompt + three length-capped copyPrompt fallbacks) plus the JSON-only delivery requirement. No schema file was touched, so schema.py/plan.js agreement is unaffected.",
+   "restored_in_session": "restore-duration-fix-session-1",
+   "restoration_note": "Operator rolled this fix back in commit eb166e1 (prompt.py / wizard.js / ARCHITECTURE.md / test_prompt_word_budget_ordering.py) as a 'smoking gun' suspect, then explicitly REGRETTED the rollback and asked for the fix to be restored while KEEPING the series-reap expiry fix. This session restored the four reverted files to their pre-eb166e1 state (git checkout eb166e1^), left the eb166e1 expiry changes (pipeline/cleanup/expired.py, scripts/reclaim-stale-task-labels-lib.mjs, bot/test/reclaim-stale-task-labels.test.mjs, pipeline/tests/test_cleanup.py, pipeline/tests/test_cleanup_series_grace.py) fully intact, and additionally fixed the same defect's three surviving passages in the live _legacy/scripts/generate_analysis_prompt.py (lines ~105, ~175, ~438).",
+   "verification_2026_09_11": {
+    "location1_prompt_py": "fixed phrasing confirmed at lines 105-106, 181, 562, 797-798, 1222 (schema field target_total_duration_seconds kept as a name; its comment frames narration pacing only)",
+    "location2_sendAgentPrompt": "all four strings fixed (bot/src/index.js lines 1070-1071 prompt array + copyPrompt fallbacks at 1086, 1088, 1091) — narration-pacing-only wording with self-sufficient end_seconds guidance, unchanged by the rollback and untouched this session",
+    "schema_agreement": "pipeline/plan/schema.py:127 and bot/src/plan.js:95 both still treat target_total_duration_seconds identically (positive-integer shape check); shared fixture pipeline/tests/fixtures/plan_cases.json unchanged and passing",
+    "grep_clean_command": "grep -rna 'Target output length\\|seconds of cuts combined\\|Duration target still applies\\|duration target\\|second vertical clip\\|s vertical clip\\|second clip\\|target duration remains about' --include='*.py' --include='*.js' --include='*.mjs' --include='*.md' --include='*.txt' .",
+    "grep_result": "zero defect-classified hits anywhere in the repo (BUILD_PROGRESS.json history excluded from pattern sweep by nature)",
+    "tests": "python: 46 passed (word-budget ordering + cleanup + series grace). bot: 115 pass / 11 fail — the 11 failures are PRE-EXISTING at HEAD (identical with changes stashed), environment-dependent suites (relay/clone-jobs/tasks/wizard integration), not touched by this work; no bot test asserts on wizard length text."
+   }
+  },
+  {
+   "id": "series_reap_grace_fix",
+   "title": "Cleanup sweep: 24h inactivity grace lets a fully-terminal series with no is_final part expire; rollback of duration_target_decouple outside the Telegram handoff",
+   "status": "complete",
+   "completed_in_session": "revert-and-cleanup-fix-session-1",
+   "problem": "Operator: tasks from 3+ days ago never expire even though the hourly cleanup action runs green. Root cause: pipeline/cleanup/expired.py::series_is_complete (bug-66) protects any series with no is_final-marked part FOREVER. Every stuck series on disk (series-1787970477573, -1788618217388, -1788737363336, -1789002249271) has all parts terminal but no is_final part, so the sweep logged PROTECT and kept them — and their KV task labels — indefinitely.",
+   "changes": [
+    "pipeline/cleanup/expired.py: added DEFAULT_SERIES_GRACE_SECONDS = 24h; new _series_last_activity_epoch() (newest part's created/expires as the series activity signal); series_is_complete() now also returns True when every part is terminal, none is is_final, and the newest part's expiry is >= grace in the past. bug-49 (non-terminal sibling) and bug-66 (recent/active series) protections unchanged.",
+    "pipeline/tests/test_cleanup_series_grace.py: 5 new tests — stuck series reaps, recently-active series protected, is_final reaps immediately, non-terminal sibling always protected, grace boundary.",
+    "scripts/reclaim-stale-task-labels-lib.mjs: the KV label reclamation half of the cleanup got the SAME 24h grace in makeSeriesIncomplete (opt-in now/grace params; caller unchanged, defaults to real clock) — otherwise the reaper would delete the stuck jobs while /tasks kept their labels forever (desync).",
+    "bot/test/reclaim-stale-task-labels.test.mjs: 2 new tests — stuck series label freed past grace, recently-active zero-final series label kept.",
+    "pipeline/tests/test_cleanup.py: SeriesCompleteness class docstring records the grace semantics (its incident fixtures expire ~1h before NOW, inside the grace window, so they still pass unmodified).",
+    "Rollback (see duration_target_decouple.rollback_note): prompt.py, wizard.js, ARCHITECTURE.md, test_prompt_word_budget_ordering.py restored to pre-phase state; sendAgentPrompt() kept."
+   ],
+   "kept_intentionally": [
+    "bot/src/index.js sendAgentPrompt(): narration-pacing framing + JSON-only delivery (all four strings) — the one fix the operator asked to keep."
+   ],
+   "verification": {
+    "rollback_proof": "git diff 630a8b6 -- ARCHITECTURE.md bot/src/wizard.js pipeline/plan/prompt.py pipeline/tests/test_prompt_word_budget_ordering.py == empty",
+    "tests": "python -m unittest pipeline.tests.test_cleanup pipeline.tests.test_cleanup_series_grace (all pass) + node --test bot/test/reclaim-stale-task-labels.test.mjs (all pass)",
+    "dry_run": "series_is_complete() evaluated against the real jobs/ tree: the 4 stuck 3-day-old series resolve complete (reapable); series-1789040069424 (part 5 awaiting_plan) stays incomplete (protected)",
+    "live_effect": "next hourly cleanup run reaps the 4 stuck series + old manual jobs; series-1789040069424 (part 5 awaiting_plan, active) stays protected"
+   },
+   "followup": "ARCHITECTURE.md §12 documents the series-protection rule WITHOUT the grace escape hatch; the file is never_edit per repo rules, so the behavior delta lives here. A future doc-edit phase should record the 24h grace in §12.",
+   "kept_in_restore_session": "restore-duration-fix-session-1 deliberately preserved every eb166e1 expiry change; only the four duration-fix files were restored. 24h inactivity grace in pipeline/cleanup/expired.py remains live."
+  },
+  {
+   "id": "narration_length_convergence",
+   "title": "Narration-length convergence — make target_duration actually bound final runtime",
+   "status": "complete",
+   "session": "narration-length-convergence-session-1",
+   "diagnosed_defect": "duration_target_decouple reframed the target as narration-only but left the per-cut word budget `per_cut_len * (188/60)` in place. Since Stage B retimes footage to narration exactly (stretch = vo/video_len), total narration scaled with SELECTED FOOTAGE, not the operator's target — a 30s job selected ~108s of scenes and rendered 1:48.",
+   "root_cause_evidence": [
+    "pipeline/stage_b/render.py:316-318 — stretch = vo / video_len; final runtime == total spoken seconds",
+    "pipeline/stage_b/voiceover.py:94 — TTS_RATE = '+20%' (~188 wpm), matching the prompt's 3.133 wps",
+    "pipeline/plan/prompt.py (old) — per-cut budget meant more/longer cuts => proportionally longer narration => longer video"
+   ],
+   "fix": "Total narration word budget = target_duration * (188/60), held at 90%-115%; budget distributed across cuts in PROPORTION to footage share. end_seconds selection, PICKING end_seconds rules, and footage-may-run-longer-than-narration guidance all UNCHANGED (renderer retimes; more cuts never means more total narration).",
+   "lines_changed": {
+    "pipeline/plan/prompt.py": [
+     "~1242-1263 NARRATION DURATION CONTRACT: per-cut formula -> TOTAL budget 90%-115% + proportional distribution",
+     "~1275 floor reference -> 90%-115% TOTAL-budget band",
+     "~1289 bound-below -> TOTAL bounded by 90%-115% band",
+     "~1295 clears-floor -> TOTAL held inside 90%-115% band",
+     "~1302 extreme example: added clause tying the 15-20s narration to the TOTAL budget",
+     "~1354 CONSTRAINTS voiceover_text bullet -> SUM lands at 90%-115% of target*(188/60)"
+    ],
+    "bot/src/index.js": [
+     "sendAgentPrompt(): added 'final video is exactly as long as total narration, keep TOTAL spoken words near ${target} x 3.1 (about N words)'"
+    ],
+    "ARCHITECTURE.md": [
+     "~430: documented total-budget 90%-115% convergence contract"
+    ],
+    "pipeline/tests/test_prompt_word_budget_ordering.py": [
+     "CONSTRAINTS regex updated to total-budget phrasing (rendered \\d+ placeholder)"
+    ],
+    "pipeline/tests/test_prompt_footage_longer_than_narration.py": [
+     "floor anchors updated: 90%-115% of this budget + 3.133 wps"
+    ]
+   },
+   "untouched_by_design": [
+    "PICKING end_seconds block",
+    "ORDER OF OPERATIONS",
+    "FOOTAGE MAY RUN LONGER THAN NARRATION guidance",
+    "pipeline/plan/schema.py + bot/src/plan.js (target_total_duration_seconds is a schema field name; validators still agree)",
+    "wizard.js length label (already narration-pacing)",
+    "series.py (passes target through, no defect prose)"
+   ],
+   "location2_self_sufficiency_check": "sendAgentPrompt message re-read standalone: it states the number is a narration-length target, states final video length == total narration, gives the word cap, and directs end_seconds to full visual payoff per 00_READ_THIS_FIRST.txt — self-sufficient.",
+   "tests": "22/22 pass (test_prompt_word_budget_ordering.py + test_prompt_footage_longer_than_narration.py)",
+   "verification_grep": "grep -rn \"seconds of cuts combined|Target output length|Duration target|-second vertical clip|s vertical clip|(end_seconds - start_seconds) * (188 / 60)|2.82 words per second|90% of this budget\" pipeline/plan/prompt.py bot/src/index.js bot/src/wizard.js pipeline/plan/series.py pipeline/plan/schema.py bot/src/plan.js ARCHITECTURE.md -> exit 1 (zero defect hits)",
+   "completed_utc": "2026-09-11"
+  }
+ ],
+ "required_secrets": [
+  {
+   "name": "CLIPFORGE_TELEGRAM_API_ID",
+   "store": "github_actions_secrets",
+   "repo_scope": "central repo ONLY (motionssalt/clipforge)",
+   "used_by": "Stage A public Telegram channel-link MTProto download (preserved subsystem #1, ARCHITECTURE.md §9.1); already referenced via ${{ secrets.NAME }} in _legacy/.github/workflows/stage-a.yml. Never provision on clones."
+  },
+  {
+   "name": "CLIPFORGE_TELEGRAM_API_HASH",
+   "store": "github_actions_secrets",
+   "repo_scope": "central repo ONLY",
+   "used_by": "Same as CLIPFORGE_TELEGRAM_API_ID."
+  },
+  {
+   "name": "CLIPFORGE_TELEGRAM_SESSION",
+   "store": "github_actions_secrets",
+   "repo_scope": "central repo ONLY",
+   "used_by": "User-authorized Telethon session for §9.1; already in stage-a.yml."
+  },
+  {
+   "name": "BOTB_MTPROTO_API_ID",
+   "store": "github_actions_secrets",
+   "repo_scope": "central repo ONLY",
+   "used_by": "Direct-video relay (preserved subsystem #2, ARCHITECTURE.md §9.2): Bot-B-authorized MTProto download inside telegram-relay.yml; already referenced in _legacy/.github/workflows/telegram-relay.yml. Never reachable from clones."
+  },
+  {
+   "name": "BOTB_MTPROTO_API_HASH",
+   "store": "github_actions_secrets",
+   "repo_scope": "central repo ONLY",
+   "used_by": "Same as BOTB_MTPROTO_API_ID."
+  },
+  {
+   "name": "BOTB_MTPROTO_BOT_TOKEN",
+   "store": "github_actions_secrets",
+   "repo_scope": "central repo ONLY",
+   "used_by": "Relay Bot B's Telegram bot token consumed by telegram-relay.yml."
+  },
+  {
+   "name": "RELAY_ENCRYPTION_KEY",
+   "store": "github_actions_secrets (central repo) AND cloudflare_worker_secret (Bot A and Bot B)",
+   "repo_scope": "central repo + the two bot Workers ONLY",
+   "used_by": "AES-256-GCM key for the relay sealed envelope, AAD 'clipforge-telegram-relay:v1:<job_id>' (§9.2). Shared secret between Bot A, Bot B, and telegram-relay.yml. Never on clones."
+  },
+  {
+   "name": "GEMINI_API_KEYS",
+   "store": "github_actions_secrets",
+   "repo_scope": "per-clone (uploaded by Bot A as a libsodium sealed secret; masked fingerprints only in branding/gemini_keys.json)",
+   "used_by": "Automatic mode Gemini analysis (pipeline/plan/automatic.py) and diagnostics.yml."
+  },
+  {
+   "name": "ZERNIO_API_KEY",
+   "store": "github_actions_secrets",
+   "repo_scope": "per-clone",
+   "used_by": "Publish phase (pipeline/publish/zernio.py + publish.yml)."
+  },
+  {
+   "name": "CLOUDFLARE_ACCOUNT_ID",
+   "store": "github_actions_secrets",
+   "repo_scope": "central repo (and any clone that deploys its own bots)",
+   "used_by": "deploy-bots.yml (wrangler deploy of Bot A + Bot B)."
+  },
+  {
+   "name": "CLOUDFLARE_API_TOKEN",
+   "store": "github_actions_secrets",
+   "repo_scope": "central repo (and any clone that deploys its own bots)",
+   "used_by": "deploy-bots.yml."
+  },
+  {
+   "name": "GITHUB_TOKEN",
+   "store": "built-in per-workflow token",
+   "repo_scope": "every repo automatically",
+   "used_by": "All workflows; no configuration needed."
+  },
+  {
+   "name": "Main Bot A Telegram bot token",
+   "store": "cloudflare_worker_secret (Bot A worker)",
+   "repo_scope": "Bot A Cloudflare Worker ONLY — never a GitHub secret",
+   "used_by": "Bot A webhook + Telegram Bot API calls. Name chosen at deploy; recorded in wrangler.bot-a.jsonc when built."
+  },
+  {
+   "name": "Bot B Telegram bot token (bot-side)",
+   "store": "cloudflare_worker_secret (Bot B worker)",
+   "repo_scope": "Bot B Cloudflare Worker ONLY",
+   "used_by": "Bot B (bot/src/relay-worker.js) Telegram intake in the internal relay group."
+  },
+  {
+   "name": "RELAY_GROUP_CHAT_ID",
+   "store": "cloudflare_worker_var_or_secret (Bot A and Bot B workers)",
+   "repo_scope": "Bot A + Bot B Workers ONLY — the internal relay group's chat ID is not itself a credential but must never point at a public group",
+   "used_by": "Relay routing (§9.2). Legacy wrangler configs already carry the bot ids/usernames as plain vars; follow that pattern."
+  },
+  {
+   "name": "Bot B central-repo PAT",
+   "store": "cloudflare_worker_secret (Bot B worker)",
+   "repo_scope": "Bot B Cloudflare Worker ONLY",
+   "used_by": "Bot B dispatching telegram-relay.yml on the central repo. Fine-grained PAT scoped to motionssalt/clipforge only."
+  }
+ ],
+ "secrets_rule": "Actual values are never written to this repo, ARCHITECTURE.md, BUILD_PROGRESS.json, NEXT_SESSION_PROMPT.md, code, logs, commits, issues, artifacts, or chat. Every credential is referenced by name only via ${{ secrets.NAME }} (GitHub Actions) or a Cloudflare Worker secret binding. The single exception is the operator-filled GITHUB_REPO_PAT placeholder in NEXT_SESSION_PROMPT.md, used only for git/gh operations and never printed or persisted.",
+ "completed_work": [
+  {
+   "session": "architecture-session-1",
+   "date_utc": "2026-08-26",
+   "summary": "Stage 1 architecture phase. Read the entire legacy codebase. Moved every pre-existing file into _legacy/ preserving internal structure (nothing deleted). Wrote ARCHITECTURE.md (full new design: stage boundaries, state machine, all handoff contracts, bot UX, modes, preserved-subsystem integration), BUILD_PROGRESS.json (this file), NEXT_SESSION_PROMPT.md (reusable handoff prompt with credential placeholders), fresh README.md and .gitignore at root.",
+   "commits": "see git log around 2026-08-26"
+  },
+  {
+   "session": "contracts-session-1",
+   "date_utc": "2026-08-26",
+   "summary": "Built the contracts_and_schemas phase — every downstream phase now has a stable foundation to import. (1) Four JSON Schemas at schemas/: job_status.schema.json, stage_a_request.schema.json, production_plan.schema.json, analysis_bundle.schema.json — all four validated as well-formed Draft 2020-12. (2) pipeline/plan/schema.py — the single Python production.json validator (ARCHITECTURE.md §7.3 rules). (3) bot/src/plan.js — the JS port. Both accept the ARCHITECTURE.md nested `series` object AND the legacy flat `series_*` siblings, and both accept `voiceover_text` OR legacy `raw_narration`. (4) pipeline/status.py — atomic status.json writer + ten-state state machine (ARCHITECTURE.md §6). Refuses to leave terminal states (complete/error/cancelled) except into another terminal state. CLI entry point for GitHub Actions. (5) bot/src/jobs.js — pure JS state-machine helpers (newStatus / mergeStatus / canTransition / serializeStatus / statusPath) that share constants with the Python side. (6) Tests: pipeline/tests/test_status.py (13 cases), pipeline/tests/test_plan_cross_validation.py (2 cases including the JS/Python equivalence check driven by a 26-document language-neutral fixture at pipeline/tests/fixtures/plan_cases.json via a Node shim at pipeline/tests/run_js_validator.mjs), bot/test/plan.test.mjs + bot/test/jobs.test.mjs (15 JS cases). All 15 Python tests and 15 JS tests pass locally; the Python↔JS cross-language equivalence check passes on every fixture. Recorded one architecture_concern (nested-vs-flat series shape) — resolved for now by accepting both, but the operator should decide the canonical form before Automatic mode is built.",
+   "commits": "four commits on main (2026-08-26): (a) schemas, (b) shared validators, (c) job state machine helpers, (d) tests + package.json"
+  },
+  {
+   "session": "stage-b-session-1",
+   "date_utc": "2026-08-26",
+   "summary": "Built the stage_b_render phase in full. New package pipeline/stage_b/: (1) common.py — ffmpeg/ffprobe wrappers, StageBError, load_production_plan() which RE-VALIDATES production.json at the Stage B boundary via the single-source validator (ARCHITECTURE.md §13 invariant #5) and normalizes both accepted shapes (nested series object OR flat series_* siblings; voiceover_text OR legacy raw_narration) exactly as pipeline/plan/schema.py does; branding readers (tts_settings, creator_watermark, music_default) and job-id sanitizer. (2) voiceover.py — Edge TTS synthesis with the curated 12-voice catalog, 24kHz mono PCM WAV contract, two-pass EBU R128 speech-clarity mastering, retry/backoff. (3) render.py — timing reconciliation (per-cut setpts retime, boundaries never move, no stretch ceiling, duration-collapse guard), single-pass mobile-safe merge (H.264 High@L4.0 / yuv420p / 30fps CFR / AAC-LC 48kHz / faststart / mp42 / no B-frames / no edit lists), optional ducked music bed, merged voiceover WAV + cut_timing.json sidecar, and strict output validation. (4) reframe.py — ffmpeg scene detection, per-scene static 1080x1200 crop windows, optional CPU InsightFace prominent-face focus with safe centre fallback. (5) captions.py — faster-whisper word timing (timing only), authoritative script alignment, sentence cards (<=6 words, clause breaks), author keyword #RRGGBB colors, Pillow 3-layer raster (soft shadow + keyline + fills), one-time Coolvetica title banner with eased drop-in/hold/drop-out, fail-closed caption-timeline validation, ASS debug sidecar. (6) watermark.py — screen-blend creator watermark with letter-shaped Gaussian shadow; empty name is an explicit no-op. (7) enhance.py — hqdn3d -> Hald-LUT color cube -> cas -> thresholded unsharp -> gradfun chain with mobile-safe re-validation and atomic in-place swap; --no-enabled is a true no-op. (8) compress.py — terminal CRF-23 delivery pass preserving video invariants, audio stream-copied, never ships a larger file. (9) run.py — orchestrator that writes jobs/<job_id>/status.json via pipeline.status before/after each risky step, plus metadata.txt and final.zip packaging (§7.4). Also added pipeline/requirements.txt, copied required assets (assets/fonts/Coolvetica.ttf, assets/anime_reference_lut_grid.png, assets/anime_reference_color_cube_l8.png) from _legacy, wrote .github/workflows/stage-b.yml (dispatchable by job_id + production_ref; path/asset/url ref resolution; source asset download accepting both the new source_input.bin and legacy original.* names; series cross-check against stage-a-request.json; restart-correct code_ref checkout + HEAD re-attach; terminal-state archiving on restart; rebase-and-retry status pushes; dedicated stage_b_cancelled job; final.mp4 + final.zip + metadata.txt uploaded to the job release; complete/error status persisted with asset URLs). Tests: 33 new unit tests in pipeline/tests/test_stage_b.py (56 Python total, all pass) and pipeline/tests/smoke_stage_b_local.py, a real-ffmpeg end-to-end smoke run of the whole chain on synthetic media (Edge TTS and Whisper stubbed — no network/model downloads in the build environment) that produced and validated a mobile-safe 1080x1200 final MP4. All 15 existing bot JS tests still pass.",
+   "commits": "stage-b-session-1 commits on main (2026-08-26)"
+  },
+  {
+   "session": "automatic-mode-session-1",
+   "date_utc": "2026-08-26",
+   "summary": "Built the automatic_mode phase in full. (1) pipeline/plan/automatic.py — ported the bounded Gemini native tool-use analyzer from _legacy/scripts/automatic_analysis.py: ordered evidence retrieval (read_transcript -> scene/key-moments -> chronological open_composite, <=12 images), GeminiGateway with multi-key rotation from GEMINI_API_KEYS, bounded transient retries, secret-redacted logging, primary->fallback model routing, narration 90%-coverage + visual-grounding gates, visual_evidence stripped before output, and validation through the shared pipeline.plan.schema contract (never the legacy contract module). (2) pipeline/plan/music.py — music ref resolution for the Stage B dispatch from the stage-a-request music block with the saved default fallback (adapted port of read_automatic_music.py). (3) stage-a.yml automatic branch replacing the fail-closed gate: automatic_analysis_running status, bundle download, analysis run gated on non-empty GEMINI_API_KEYS, stage_b_queued status, and stage-b.yml dispatch with a fresh code_ref. (4) pipeline/tests/test_automatic.py — 19 offline tests with a scripted gateway; full suite green (93 Python tests + 93 JS assertions incl. 52 subtests).",
+   "commits": "automatic-mode-session-1 commits on main (2026-08-26): d877498, 4704269, 86edc50, 073f272"
+  },
+  {
+   "session": "bot-a-session-2",
+   "date_utc": "2026-08-26",
+   "summary": "Completed the bot_a_core phase (steps 3-8 of 8). Added bot/src/wizard.js (pure, fully unit-tested wizard state machine implementing §8.4 verbatim: fixed step order, series toggle skips focus, source classification with §5 disabled-social-host rejection and t.me public-post regex, paginated music library picker, §7.1 nested request projection), bot/src/views.js (the §8.1 activeViewId self-editing single-message mechanic ported verbatim from legacy, plus §8.3 home-screen and §8.6 settings-screen composers), bot/src/runtime.js (secret-redacting userError, requireCredentials onboarding gate, §8.5 task status screen with contextual per-state buttons), the six §8.2 command modules under bot/src/commands/, and bot/src/index.js — the Bot A worker: webhook entry authenticating X-Telegram-Bot-Api-Secret-Token (401 otherwise, §13.3), private chats only, KV update dedupe; wizard callbacks (mode with Automatic-needs-Gemini gate and Settings shortcut, series toggle, source text/document handling incl. 1 MB .torrent staging, duration, music none/default/library, confirm); job start writes the nested stage-a-request.json + version-2 queued status.json and dispatches stage-a.yml with the current default-branch SHA as code_ref; §8.7 manual handoff (Get agent prompt + Open release button, Upload production.json with bot/src/plan.js validation and specific error feedback while staying in the upload state, valid plans committed and stage-b.yml dispatched with music_ref resolved exactly like pipeline/plan/music.py); §8.5 status actions (restart A/B with fresh code_ref, cancel Stage B with confirm, delete task with confirm, download links, paginated §5 torrent selection that re-writes the request and re-dispatches Stage A); §10 onboarding (Shadow Clone create + connect with immediate PAT message deletion and encrypted KV storage); settings sub-screens (Gemini sealed-secret add/clear with masked fingerprints only, narrator with previews from assets/tts-previews/, music library upload/preview/default/delete, watermark, series-mode default). telegram_relay sources are gated with a not-yet-built notice (relay is the next phase); Zernio publishing stubbed for its phase. Added bot/wrangler.bot-a.jsonc (vars per legacy; secret names documented in comments only). Tests: bot/test/wizard.test.mjs adds 16 cases — 73 JS tests + 56 Python tests all pass.",
+   "commits": "bot-a-session-2 commits on main (2026-08-26)"
+  },
+  {
+   "session": "relay-session-1",
+   "date_utc": "2026-08-26",
+   "summary": "Built the relay_subsystem phase. (1) bot/src/relay.js — verbatim port of the caption/marker codecs (CFRELAY1/CFRELAY_READY1 formats, 1800 MiB cap, relayVideoMetadata). (2) bot/src/relay-worker.js — verbatim Bot B worker (webhook-secret auth, group+Bot-A+shape relevance gate before any KV access, media file_id capture, ready-marker -> telegram-relay.yml dispatch on the central repo with the sealed payload). (3) bot/wrangler.bot-b.jsonc. (4) relay/mtproto_transfer.py — the bounded 4-connection MTProto transfer extracted verbatim for reuse by the relay and the upcoming telegram_channel phase. (5) relay/telegram_relay.py + relay/requirements.txt + .github/workflows/telegram-relay.yml — the central-runner relay: decrypts the Bot A sealed envelope (AES-256-GCM, AAD clipforge-telegram-relay:v1:<job>), downloads the copied group media (local Bot API server first, MTProto fallback with parallel transfer + single-connection fallback), uploads it to the target clone as a temporary prerelease release asset, rewrites the clone's §7.1 nested stage-a-request.json source.relay block with release_tag/expected_size_bytes/sha256, and dispatches the clone's stage-a.yml with job_id+code_ref only. handoff_token rule preserved (central repo substitutes its own workflow token). Bot A: direct video at the wizard source step is staged via copyMessage with the relay caption (supergroup-migration retry preserved); confirm seals the envelope carrying the nested request and the user's own PAT, parks the ready record, posts the ready marker. Tests: bot/test/relay.test.mjs (8 cases: codec round-trips, 1800 MiB cap enforcement, Bot B relevance gate incl. wrong-group/wrong-sender/non-bot/missing-config, sealed-payload state+message matching) and pipeline/tests/test_telegram_relay.py (13 cases: envelope round-trip/wrong-job/wrong-key/malformed, payload validation incl. per-field omission, handoff_token both repos, nested request metadata write-back + wrong-job/wrong-kind rejection). All JS (37) and Python (106) tests pass.",
+   "commits": "relay-session-1 commits on main (2026-08-26)"
+  },
+  {
+   "session": "relay-session-1",
+   "date_utc": "2026-08-26",
+   "summary": "Built the relay_subsystem phase. (1) bot/src/relay.js — verbatim port of the caption/marker codecs (CFRELAY1/CFRELAY_READY1 formats, 1800 MiB cap, relayVideoMetadata). (2) bot/src/relay-worker.js — verbatim Bot B worker (webhook-secret auth, group+Bot-A+shape relevance gate before any KV access, media file_id capture, ready-marker -> telegram-relay.yml dispatch on the central repo with the sealed payload). (3) bot/wrangler.bot-b.jsonc. (4) relay/mtproto_transfer.py — the bounded 4-connection MTProto transfer extracted verbatim for reuse by the relay and the upcoming telegram_channel phase. (5) relay/telegram_relay.py + relay/requirements.txt + .github/workflows/telegram-relay.yml — the central-runner relay: decrypts the Bot A sealed envelope (AES-256-GCM, AAD clipforge-telegram-relay:v1:<job>), downloads the copied group media (local Bot API server first, MTProto fallback with parallel transfer + single-connection fallback), uploads it to the target clone as a temporary prerelease release asset, rewrites the clone's §7.1 nested stage-a-request.json source.relay block with release_tag/expected_size_bytes/sha256, and dispatches the clone's stage-a.yml with job_id+code_ref only. handoff_token rule preserved (central repo substitutes its own workflow token). Bot A: direct video at the wizard source step is staged via copyMessage with the relay caption (supergroup-migration retry preserved); confirm seals the envelope carrying the nested request and the user's own PAT, parks the ready record, posts the ready marker. Tests: bot/test/relay.test.mjs (8 cases: codec round-trips, 1800 MiB cap enforcement, Bot B relevance gate incl. wrong-group/wrong-sender/non-bot/missing-config, sealed-payload state+message matching) and pipeline/tests/test_telegram_relay.py (13 cases: envelope round-trip/wrong-job/wrong-key/malformed, payload validation incl. per-field omission, handoff_token both repos, nested request metadata write-back + wrong-job/wrong-kind rejection).",
+   "commits": "relay-session-1 commits on main (2026-08-26)"
+  },
+  {
+   "session": "telegram-channel-session-1",
+   "date_utc": "2026-08-26",
+   "summary": "Built the telegram_channel_subsystem phase in full AND closed the relay ingest gap. (1) pipeline/stage_a/telegram_channel.py — verbatim port of the legacy MTProto public-channel download: require_original_repo (server-side github.repository check) + fail-closed mtproto_credentials_available gate, the _download_telegram_mtproto flow (entity validation rejecting groups, media/video checks, 5 GiB cap, 45-minute timeouts, parallel transfer with single-connection fallback via the already-extracted relay/mtproto_transfer.py), plus the yt-dlp public-post helpers preserved for parity. (2) ingest.py wiring — telegram_channel kind and t.me post URLs handed in as url kind both route to the §9.1 path (legacy download_drive.py main() dispatch semantics preserved). (3) stage-a.yml — ingest step receives CLIPFORGE_TELEGRAM_API_ID/HASH/SESSION by name only (absent on clones = the security boundary's second layer) and installs telethon/cryptg. (4) Relay follow-up closed — ingest.py _gate_telegram_relay replaced with the real relay-asset download: metadata validation (tag regex, 1800 MiB cap, 64-hex checksum), disk preflight, GitHub releases-by-tag + octet-stream asset fetch, streaming SHA-256 verification, partial-file cleanup. Tests: 11 new Stage A tests (28 total in test_stage_a.py); full suite 116 Python + 37 JS all green.",
+   "commits": "telegram-channel-session-1 commits on main (2026-08-26): 45cfb94, 35b5a56, e0a1d85, baaf385"
+  },
+  {
+   "session": "publish-zernio-session-2",
+   "date_utc": "2026-08-26",
+   "summary": "publish_zernio step 3/6: authored .github/workflows/publish.yml, the unified Zernio workflow replacing legacy zernio-publish.yml and zernio-manual-publish.yml per ARCHITECTURE.md §4. All six actions (discover/publish/retry/update/cancel/manual) run against python -m pipeline.publish.zernio; the legacy manual-publish two-workflow hop (resolve -> dispatch zernio-publish.yml) is folded into action=manual, which resolves retry-vs-fresh via the ported resolve-manual CLI and executes the resolved operation in the same run under the same clipforge-zernio-publishing serial concurrency group. Stage-B complete gate, release final.mp4 download, smart-schedule external-post collision check, and durable commit-back of status.publishing + branding/zernio_queue.json are preserved verbatim from the legacy workflow. YAML validated; 72 zernio tests green.",
+   "files_created": [
+    ".github/workflows/publish.yml"
+   ],
+   "files_modified": [
+    "BUILD_PROGRESS.json"
+   ],
+   "tests": "python3 -m pytest pipeline/tests/test_publish_zernio.py -q (72 passed); YAML parse check on publish.yml"
+  },
+  {
+   "session": "publish-zernio-session-2",
+   "date_utc": "2026-08-26",
+   "summary": "publish_zernio §6.2 schema conformance fix: publish.yml + zernio.py initially ported the legacy flat status.publishing shape (provider/mode/scheduled_for/timezone/updated_at_epoch keys, \"requested\"/\"error\" statuses), but the new job_status.schema.json is additionalProperties:false and only allows the §6.2 enum. Fixed: publish_video() now returns exactly {status, posts, idempotency_key}; aggregate_publishing_status maps provider-side states (requested/error/unknown) onto the enum (empty -> not_requested, all-cancelled -> cancelled, error -> failed); publishing_error_state emits \"failed\" + preserved posts/idempotency_key; workflow \"mark requested\" step writes {status: publishing, posts: [], idempotency_key}; persist step builds the schema-conformant block and keeps mode/schedule details on the queue ledger item (branding/zernio_queue.json is NOT schema-bound). Tests: 74/74 zernio green; 210 pipeline green (2 pre-existing test_stage_a relay failures reproduce WITHOUT my changes — sandbox disk-preflight environment issue, not a regression).",
+   "files_modified": [
+    ".github/workflows/publish.yml",
+    "pipeline/publish/zernio.py",
+    "pipeline/tests/test_publish_zernio.py",
+    "BUILD_PROGRESS.json"
+   ],
+   "tests": "pytest pipeline/tests/test_publish_zernio.py (74 passed); pytest pipeline/tests/ (210 passed, 2 pre-existing stage_a env failures); YAML parse check"
+  },
+  {
+   "session": "publish-zernio-session-2",
+   "date_utc": "2026-08-26",
+   "summary": "publish_zernio step 4a/6: bot/src/zernio.js pure helpers + 27 green unit tests. Ports the legacy bot Zernio logic verbatim where it is logic (validators, interval_days->hours, active-account filtering, target toggle, summary labels, idempotency reuse) and adapts the publishing summary to the §6.2 enum. Keyboards use the new task:pub* callback namespace (task:pubnow/pubsmart/pubmanual for new publishes; task:pubretry/pubpostnow/pubpostmanual/pubcancel for per-post actions) instead of the legacy zpub:/zpost: prefixes so the whole publish surface hangs off the existing task: router branch.",
+   "files_created": [
+    "bot/src/zernio.js",
+    "bot/test/zernio.test.mjs"
+   ],
+   "files_modified": [
+    "BUILD_PROGRESS.json"
+   ],
+   "tests": "node --test test/zernio.test.mjs (27 passed)"
+  },
+  {
+   "session": "publish-zernio-session-3",
+   "date_utc": "2026-08-26",
+   "summary": "publish_zernio step 6/6 (final): Stage B automatic-publish dispatch. Added automatic_dispatch() + the automatic-dispatch CLI subcommand to pipeline/publish/zernio.py: reads jobs/<id>/status.json, branding/zernio_settings.json, branding/zernio_accounts.json and dispatches only when state==complete, settings.enabled && settings.auto_publish, automatic_mode valid, ZERNIO_API_KEY configured (presence flag only — the secret value is never read), and >=1 selected target account is still active in the committed snapshot (bot zernioTargets semantics: isActive/enabled/needsReconnection). Request id reuses the failed attempt's idempotency_key (bot zernioRequestId rule) or mints clipforge-auto-<job>-<uuid>. Every skip returns a reason and is a no-op success. Added the \"Dispatch automatic Zernio publish when enabled\" step to .github/workflows/stage-b.yml after the series-continuation step: runs python -m pipeline.publish.zernio automatic-dispatch, and when armed gh-workflow-runs publish.yml action=publish with mode/timezone/targets_json/request_id. 12 new gate-matrix tests; full publish suite 85 green.",
+   "files_created": [],
+   "files_modified": [
+    "pipeline/publish/zernio.py",
+    "pipeline/tests/test_publish_zernio.py",
+    ".github/workflows/stage-b.yml",
+    "BUILD_PROGRESS.json"
+   ],
+   "tests": "PYTHONPATH=. python3 -m unittest pipeline.tests.test_publish_zernio (85 passed, 12 new); stage-b.yml re-parsed with PyYAML (19 steps, new step between series continuation and failure handler)"
+  },
+  {
+   "session": "background-workflows-session-1",
+   "date_utc": "2026-08-26",
+   "summary": "background_workflows step 1/3: cleanup.yml ported. pipeline/cleanup/expired.py replaces _legacy/scripts/cleanup.py — same scope (releases+tags by clipforge-/clipforge-relay-input- prefix or clipforge-job-id body marker, jobs/<id>/ folders, clipforge-job/<id> branches) with three adaptations: (1) stdlib urllib instead of the requests dependency (the cleanup job now installs nothing), (2) expiry honors the new §6.2 expires_at_epoch field first, falling back to created_at_epoch+ttl and then the release created_at (legacy chain preserved), (3) the module is importable and testable offline via an injectable opener. The new cleanup.yml drops the legacy pkuseg/chatterbox dependency-build block entirely.",
+   "files_created": [
+    "pipeline/cleanup/__init__.py",
+    "pipeline/cleanup/__main__.py",
+    "pipeline/cleanup/expired.py",
+    "pipeline/tests/test_cleanup.py",
+    ".github/workflows/cleanup.yml"
+   ],
+   "files_modified": [
+    "BUILD_PROGRESS.json"
+   ],
+   "tests": "PYTHONPATH=. python3 -m unittest pipeline.tests.test_cleanup (21 passed); cleanup.yml parsed with PyYAML; python -m pipeline.cleanup correctly refuses to run without GITHUB_TOKEN/GITHUB_REPOSITORY"
+  },
+  {
+   "session": "background-workflows-session-1",
+   "date_utc": "2026-08-26",
+   "summary": "background_workflows step 2/3: deploy-bots.yml ported. Replaces the legacy telegram-bot/pnpm layout with bot/ + npm: actions/setup-node@v4 (node 22, npm cache on bot/package-lock.json), npm ci --ignore-scripts, npm test (node --test test/*.mjs; verified locally: 75 passed / 0 failed), then cloudflare/wrangler-action@v3 deploys for wrangler.bot-a.jsonc and wrangler.bot-b.jsonc. Secrets are name-only (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID); per-worker runtime secrets stay out of CI per each wrangler config's comments.",
+   "files_created": [
+    ".github/workflows/deploy-bots.yml"
+   ],
+   "files_modified": [
+    "BUILD_PROGRESS.json"
+   ],
+   "tests": "deploy-bots.yml parsed with PyYAML (trigger paths + step order verified); cd bot && npm ci --ignore-scripts && npm test (75 passed, 0 failed)"
+  },
+  {
+   "session": "bugfix-1-error-visibility",
+   "date_utc": "2026-08-27",
+   "summary": "Bug 1 fix (failed tasks disappeared silently). Confirmed both suspected causes: (1) stage-a.yml wrote its job_id output only AFTER validation, so a pre-resolution failure left steps.req.outputs.job_id empty and the if:failure() handler swallowed the resulting write failure behind || true / a trailing true, leaving no status.json anywhere; (2) showTasks() treated an unreadable status (readStatus null) identically to a still-running task, rendering it as queued. Fixes: the req step now emits job_id + release_tag unconditionally and exits 0 with job_valid=false on bad input (hard stop moved to a dedicated Validate resolved job step); the failure handler guards on an unusable job_id, fails loudly (exit 1) when it cannot persist the error status, and its push retry loop now reports failure instead of ending in bare true; showTasks renders an unreadable status as status unavailable instead of queued; describeTaskState helper added to constants.js (also carries the Bug 3 torrent phrasing). Tests: 6 Python regression tests (workflow YAML shape + early-failure CLI write produces a readable error status for a job with no prior status) and 3 JS tests (describeTaskState, loadTaskList keeps null statuses distinct, showTasks renders status unavailable not queued).",
+   "files_created": [],
+   "files_modified": [
+    ".github/workflows/stage-a.yml",
+    "bot/src/commands/tasks.js",
+    "bot/src/constants.js",
+    "bot/test/tasks.test.mjs",
+    "pipeline/tests/test_workflow_failure_handling.py",
+    "BUILD_PROGRESS.json"
+   ],
+   "tests": "PYTHONPATH=. python3 -m unittest discover pipeline/tests (216 passed, was 210); cd bot && npm test (82 passed, was 79)"
+  },
+  {
+   "session": "bugfix-2-label-lifecycle",
+   "date_utc": "2026-08-27",
+   "summary": "Bug 2 fix (task labels never reclaimed; legacy and current tasks mixed). Root cause confirmed: storage.js nextLabel()/ensureTaskLabel() allocated from a monotonic tasks.next counter, removeTask() existed but nothing called it, and pipeline/cleanup/expired.py only manages GitHub-side artifacts with no knowledge of the bot KV label store. Fixes: (1) manual deletion surfaced — every /tasks row now carries a delete button routed through the existing task:del -> task:delconfirm -> removeTask flow, and the task view offers Delete for terminal AND unreadable-status tasks; (2) automatic reclamation via new scripts/reclaim-stale-task-labels.mjs running hourly as the task-label-reclamation job of cleanup.yml — it scans user:<chat>:tasks KV docs via wrangler CLI and frees labels whose job is stale under the SAME rule as expired.py (expires_at_epoch past, terminal state, or no readable status); credentials referenced by secret name only (CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID, same pair as deploy-bots.yml); (3) label reuse — ensureTaskLabel now picks the lowest currently-unused letter instead of incrementing forever; (4) /tasks sorts by status.created_at_epoch newest-first (sortTaskEntries), so reused early letters no longer read as old tasks; (5) the one-time legacy cleanup of the operators live KV labels (B,C,G,H,I,J,K,L,M,N) is executed by the same script on the next cleanup.yml run — Cloudflare credentials exist only as repo secrets, so it cannot be run from a build sandbox; this is documented and the first runs report is uploaded as the task-label-reclamation-report artifact.",
+   "files_created": [
+    "scripts/reclaim-stale-task-labels.mjs"
+   ],
+   "files_modified": [
+    "bot/src/storage.js",
+    "bot/src/commands/tasks.js",
+    "bot/src/runtime.js",
+    "bot/test/tasks.test.mjs",
+    ".github/workflows/cleanup.yml",
+    "BUILD_PROGRESS.json"
+   ],
+   "tests": "cd bot && npm test (86 passed, was 82); PYTHONPATH=. python3 -m unittest discover pipeline/tests (216 passed — unchanged)"
+  },
+  {
+   "session": "bugfix-3-torrent-selection-prompt",
+   "date_utc": "2026-08-27",
+   "summary": "Bug 3 fix (torrent file selection was not clearly surfaced). Investigation confirmed the pipeline side is intact — stage_a/ingest.py still writes torrent-selection.json and sets awaiting_torrent_selection via pipeline.status for multi-file torrents with no pick yet (identical to the legacy flow), and the receive side (task:tsel/tselpick -> showTorrentSelection/pickTorrentFile in index.js) was already fully wired. The gap was the SEND side in the current bot: /tasks printed the raw state name via the generic fallback, and the task view showed only the bare state + message. Fixes: describeTaskState (constants.js, added with Bug 1) renders the state as waiting for your file selection; showTasks uses it for both the line and the Open button; the task view (runtime.js showTask) now adds an explicit call-to-action line telling the operator to tap Choose video file (which routes to the existing paginated chooser). Tests: 3 new JS tests (list rendering, taskKeyboard chooser wiring, task-view prompt).",
+   "files_created": [],
+   "files_modified": [
+    "bot/src/runtime.js",
+    "bot/test/tasks.test.mjs",
+    "BUILD_PROGRESS.json"
+   ],
+   "tests": "cd bot && npm test (89 passed, was 86); PYTHONPATH=. python3 -m unittest discover pipeline/tests (216 passed — unchanged)"
+  },
+  {
+   "session": "feature-4-unseen-task-marker",
+   "date_utc": "2026-08-27",
+   "summary": "Feature 4 (mark new/unopened tasks with NEW marker). Confirmed no seen/opened concept existed in tasks.options — added as new state: options[jobId].seen, keyed by JOB id (not label) so a freed-and-reused label can never inherit the previous occupants seen state. New tasks default to unseen (absence of seen:true); showTasks/loadTaskList read the flag per entry and prefix unseen rows with the NEW emoji on both the list line and the Open button; showTask (the task:open:<label> flow in runtime.js) calls markTaskSeen on open, a no-op write-skip on repeat opens. Works alongside Bug 2s creation-time sort as an independent explicit flag, not inferred from recency. Tests: 3 new JS tests (unseen shows marker / seen does not; opening clears the marker on next render; label-reused new task starts unseen). Follow-up: fixed three test assertions (not the implementation) that were red on first push.",
+   "files_created": [],
+   "files_modified": [
+    "bot/src/storage.js",
+    "bot/src/commands/tasks.js",
+    "bot/src/runtime.js",
+    "bot/test/tasks.test.mjs",
+    "BUILD_PROGRESS.json"
+   ],
+   "tests": "FINAL: cd bot && npm test (92 passed) — verified at commit fixing the test needles; PYTHONPATH=. python3 -m unittest discover pipeline/tests (216 passed). Note: the feature commit itself briefly shipped 3 red tests whose needles did not match the rendered \"label</b> —\" row shape; two follow-up test-only commits fixed the assertions. Implementation was correct throughout."
+  }
+ ],
+ "next_action": "None for this phase. duration_target_decouple is complete (restored) and series_reap_grace_fix is complete (kept). Next real cleanup run should now reap the long-stuck series folders once their 24h grace has elapsed.",
+ "architecture_concerns": [
+  {
+   "id": "series-shape-nested-vs-flat",
+   "raised_in_session": "contracts-session-1",
+   "date_utc": "2026-08-26",
+   "decision_at_stake": "ARCHITECTURE.md §7.3 documents production.json's series data as a NESTED object (`series.series_id`, `series.part`, `series.start_seconds`, `series.end_seconds`, `series.is_final`, `series.summary`). The legacy contract (_legacy/schemas/production_plan_contract.json and _legacy/scripts/production_plan_contract.py) uses FLAT sibling fields (`series_id`, `series_part`, `series_start_seconds`, `series_end_seconds`, `series_final`, `series_summary`). ARCHITECTURE.md §14 also states 'the production.json field names and validation semantics' are intentionally NOT changing — which is in tension with the nested rewrite in §7.3. Existing legacy plans, and the legacy manual browser tool that users still paste output from, all use the flat shape.",
+   "why_i_think_this_needs_attention": "Two producers (external agents pasted by the user in Manual mode, and any tool referencing the old browser validator) will keep emitting the flat shape. If Stage B were coded to accept only the nested shape it would reject every legacy plan on sight; if the flat shape were coded to be the only accepted shape, we would drift from ARCHITECTURE.md §7.3. Only the operator can decide which is canonical.",
+   "what_i_did_for_now": "Applied the closest-analog policy: accepted BOTH shapes in schema.py and plan.js (nested wins per-field when both are present), mirroring the already-established precedent of accepting `raw_narration` alongside `voiceover_text`. Continued to build against ARCHITECTURE.md as written — the nested shape is preferred and documented as such. This does not silently redesign anything: both shapes validate to identical semantics.",
+   "what_the_right_answer_probably_is": "Pick one. If Stage B ports cleanly from the legacy scripts (which read `series_id`, `series_part`, …), the FLAT shape is the pragmatic canonical and ARCHITECTURE.md §7.3 should be revised to match. If the nested shape is genuinely preferred, add a note in §7.3 that legacy flat form is accepted for input but is deprecated on output — and update 00_READ_THIS_FIRST.txt (the analysis prompt) so external agents emit the nested shape.",
+   "action_requested": "Operator: pick a canonical shape and update ARCHITECTURE.md §7.3 / §14 accordingly. Until then future sessions should keep accepting both — do NOT delete either code path in schema.py or plan.js without operator sign-off.",
+   "status": "resolved",
+   "resolved_at_utc": "2026-08-26",
+   "resolution": "Operator decision: nested is canonical. ARCHITECTURE.md §14 corrected to stop implying the flat legacy shape was unchanged/preserved. pipeline/plan/prompt.py SERIES_DIRECTIVE updated so the agent-facing analysis prompt now instructs producers to emit the nested series object, not the flat siblings. schema.py/plan.js unchanged — they already accepted both shapes with nested taking precedence, which remains correct: flat stays accepted on input only, for plans already in flight or pasted from legacy tooling, and is never to be removed without a separate operator call."
+  },
+  {
+   "id": "publishing-block-shape-strict-schema",
+   "raised_in_session": "publish-zernio-session-2",
+   "date_utc": "2026-08-26",
+   "decision_at_stake": "ARCHITECTURE.md §6 line ~280 says publishing is \"metadata attached to a complete job (status.publishing)\" and §6.2 fixes the block to {status, posts, idempotency_key} with additionalProperties:false. The legacy publishing block carried provider/mode/scheduled_for/timezone/updated_at_epoch and \"requested\"/\"error\" statuses. Resolution chosen: schema wins — the block is exactly the §6.2 shape; mode/schedule details moved to the branding/zernio_queue.json ledger item (not schema-bound). Bot reads mode/schedule from the queue when needed.",
+   "blocking": false
+  },
+  {
+   "id": "relay-media-before-confirm-record-silent-drop",
+   "raised_in_session": "kv-write-amplification-audit (prior session — its commit never reached origin/main; concern re-derived from code this session)",
+   "date_utc": "2026-08-26",
+   "decision_at_stake": "Ordering race in the §9.2 relay path: Bot A copied the video into the private relay group at staging time, but the KV relay-job record (putRelayJob) was only created at confirm time. Bot B's webhook (relay-worker.js rememberCopiedMedia) could observe the group-copied media before the record existed, silently drop it (no record to attach bot_b_file_id to), and the later ready-signal then failed with 'send the video again'. Rare, self-healing, no data loss — but a bad user-facing moment. Inherited from the legacy implementation, not introduced by the rewrite.",
+   "why_i_think_this_needs_attention": "The record existed only in the confirm step, so the whole staging→confirm window was a drop window for the copied-media update. Closing it removes the unexplained 'send the video again' resend entirely rather than handling it after the fact.",
+   "what_i_did_for_now": "Fixed: the KV relay-job record is now created at staging time (state 'staged', media coordinates + internal_group_chat_id) BEFORE the group copy/forward call in bot/src/index.js handleWizardRelayVideo; after the copy succeeds the record is updated with internal_group_message_id via a merge that preserves any bot_b_file_id Bot B already attached. startRelayJob (confirm) now upgrades the existing record in place (state 'ready' + sealed_payload) instead of creating it. relay-worker.js rememberCopiedMedia logic unchanged — it simply always finds the record now; it is additionally exported via __test for the regression tests.",
+   "what_the_right_answer_probably_is": "This is the right answer — create-then-copy ordering removes the race at the source. The 'staged' state is not routable: routeReadyMarker's sealedRelayPayload still requires state 'ready' plus sealed_payload, so an early/lone ready marker fails closed exactly as before. No dedup, relevance-gate, or KV write-conditionality logic from the prior KV-quota work was touched (net staging→confirm relay-record KV writes are unchanged: 2).",
+   "action_requested": "None — resolved and verified. 3 new regression tests prove the race is closed (record created at staging lets rememberCopiedMedia attach media before any confirm-time fields exist; pre-fix drop behavior documented; out-of-scope updates still refused).",
+   "status": "resolved",
+   "resolved_at_utc": "2026-08-26",
+   "resolution": "Moved relay-job record creation from confirm time to staging time in bot/src/index.js (handleWizardRelayVideo creates the record before copyMessage; startRelayJob merges/upgrades it). bot/test/relay.test.mjs +3 tests. Full suites green after change: 210 Python + 78 JS (was 75)."
+  },
+  "Bug 2 one-time legacy-label cleanup cannot run from a CI-less build sandbox (Cloudflare creds are repo secrets only); it executes via the new task-label-reclamation job on the next hourly cleanup.yml run — verify the reclamation-report artifact after first run."
+ ],
+ "active_blockers": [],
+ "human_review_items": [
+  "architecture_concerns[0] (series-shape-nested-vs-flat): operator must pick the canonical production.json series shape (nested per §7.3 vs flat legacy) before the automatic_mode phase is built. Until decided, both validators accept both shapes — do not delete either code path.",
+  "Operator must fill GITHUB_REPO_PAT in NEXT_SESSION_PROMPT.md per-run (never committed) and confirm all required_secrets above are set in their stores before the phases that need them (relay/telegram_channel need the central-only secrets; bot deploys need the Cloudflare ones)."
+ ],
+ "verification": {
+  "session": "background-workflows-session-2",
+  "date_utc": "2026-08-26",
+  "result": "Post-build full verification after the final phase (background_workflows) completed. (1) Full Python suite: 210 tests, ALL PASS (python -m unittest discover pipeline/tests -p 'test_*.py' with PYTHONPATH=repo root) — covers contracts/schemas cross-validation, stage_a, stage_b, status, automatic mode, series, publish/zernio, cleanup, telegram relay, and the new diagnostics module (12 tests). (2) Full bot JS suite: 75 tests, ALL PASS (npm test after npm ci --ignore-scripts, Node v22.23.2) — wizard, plan, jobs, relay, series, zernio. An initial 2-failure run was an environment artifact only: tweetnacl/tweetnacl-sealedbox-js were not yet installed in the sandbox (ERR_MODULE_NOT_FOUND on bot/src/github.js); after npm ci the suite is 75/75 green. No source change was needed. (3) New workflow YAML validated structurally (diagnostics.yml: 2 jobs, secrets referenced by name only, contents:read, no credential material). (4) All 10 phases of ARCHITECTURE.md §15 build order are marked complete; commits dd11253 (diagnostics module) and 3c63ca8 (diagnostics workflow) pushed to main.",
+  "note_after_relay_fix": "relay-ordering-fix-session-1: 210 Python (unittest discover pipeline/tests) + 78 JS (npm test) all green after the staging-time relay record fix."
+ },
+ "last_session": {
+  "date": "2026-09-11",
+  "summary": "narration_length_convergence: total word budget 90%-115% of target*(188/60) replaces per-cut budget; runtime now converges to operator target; 22/22 prompt tests pass; verification grep clean."
+ },
+ "architecture_concerns_closed": [
+  {
+   "concern": "ingest.py _gate_telegram_relay fail-closed stub (relay-asset download gap)",
+   "raised_in_session": "relay-session-1",
+   "closed_in_session": "telegram-channel-session-1",
+   "resolution": "Replaced with _relay_asset_metadata + _download_relay_asset: validates release_tag/expected_size_bytes/sha256 per legacy stage-a.yml checks (1800 MiB cap), prefetches disk, streams source_input.bin from the clipforge-relay-input-<job> release via GH_TOKEN with octet-stream Accept, verifies exact size + SHA-256, deletes partial files on mismatch. 6 new tests cover missing metadata, bad tag/size/checksum, happy path, tamper path, 404."
+  },
+  {
+   "concern": "relay-media-before-confirm-record-silent-drop (relay staging/confirm ordering race)",
+   "raised_in_session": "kv-write-amplification-audit (prior session; commit unpushed/lost)",
+   "closed_in_session": "relay-ordering-fix-session-1",
+   "resolution": "KV relay-job record now created at staging time before the group copy; confirm upgrades it in place. rememberCopiedMedia can no longer observe copied media without a record. 3 regression tests; 210 Python + 78 JS green."
+  }
+ ]
+}

@@ -1,0 +1,76 @@
+name: Telegram intake check
+
+on:
+  workflow_dispatch:
+    inputs:
+      telegram_post:
+        description: Public Telegram channel post URL containing one video
+        required: true
+        type: string
+        default: https://t.me/yt4clipforge/2
+
+permissions:
+  contents: read
+
+jobs:
+  validate-public-telegram-intake:
+    name: Validate public Telegram intake
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Dedicated user-authorized MTProto session. GitHub masks encrypted
+      # secret values, and the downloader never prints them.
+      CLIPFORGE_TELEGRAM_API_ID: ${{ secrets.CLIPFORGE_TELEGRAM_API_ID }}
+      CLIPFORGE_TELEGRAM_API_HASH: ${{ secrets.CLIPFORGE_TELEGRAM_API_HASH }}
+      CLIPFORGE_TELEGRAM_SESSION: ${{ secrets.CLIPFORGE_TELEGRAM_SESSION }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install FFmpeg and source downloader dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          python -m pip install 'yt-dlp[default]>=2026.1,<2027' 'requests>=2.32,<3' 'telethon>=1.44,<2'
+
+      - name: Download and verify the requested public Telegram channel source
+        shell: bash
+        env:
+          TELEGRAM_POST: ${{ inputs.telegram_post }}
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          python scripts/download_drive.py "$TELEGRAM_POST" work/source_input.bin
+          test -s work/source_input.bin
+          duration="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 work/source_input.bin)"
+          python - "$duration" <<'PY'
+          import sys
+          duration = float(sys.argv[1])
+          if duration <= 0:
+              raise SystemExit('Downloaded Telegram media has no positive duration.')
+          print(f'Validated public Telegram channel video duration: {duration:.3f} seconds')
+          PY
+
+      - name: Verify public Telegram group links fail before media processing
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python scripts/download_drive.py https://t.me/motionsaltdownloads/2 work/group-source.bin > work/group-source.log 2>&1
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo 'Expected the public Telegram group link to fail.' >&2
+            exit 1
+          fi
+          # Telegram may label a group post as no accessible media in MTProto,
+          # but it must never be accepted as a Stage A source.
+          echo 'Confirmed rejection for unsupported public Telegram group source.'

@@ -1,0 +1,131 @@
+{
+  "job_id": "manual-1787666813827",
+  "stage": "complete",
+  "message": "Final video is ready (one merged MP4 with voiceover and subtitles).",
+  "release_tag": "clipforge-manual-1787666813827",
+  "release_url": "https://github.com/motionssalt/clipforge/releases/tag/clipforge-manual-1787666813827",
+  "assets": {
+    "00_READ_THIS_FIRST.txt": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787666813827/00_READ_THIS_FIRST.txt",
+    "key_moments.json": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787666813827/key_moments.json",
+    "original.mp4": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787666813827/original.mp4",
+    "scene_index.json": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787666813827/scene_index.json",
+    "screenshots.zip": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787666813827/screenshots.zip",
+    "transcript.json": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787666813827/transcript.json",
+    "final_zip": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787666813827/clipforge-manual-1787666813827-final.zip",
+    "final_mp4": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787666813827/final.mp4"
+  },
+  "created_at_epoch": 1787666942,
+  "updated_at_epoch": 1787692218,
+  "expires_at_epoch": 1787710142,
+  "extra": {
+    "workflow_run_id": "32883551481",
+    "workflow_run_url": "https://github.com/motionssalt/clipforge/actions/runs/32883551481",
+    "automatic_mode": "false",
+    "workflow_phase": "stage_b",
+    "duration_seconds": "1686",
+    "screenshot_count": "281",
+    "event_frame_count": "60",
+    "shot_count": "446",
+    "key_moment_count": "60",
+    "original_asset_name": "original.mp4",
+    "music_ref": "path:audio-library/𝐒𝐀𝐃 𝐅𝐔𝐍𝐊 (𝐒𝐔𝐏𝐄𝐑 𝐒𝐋𝐎𝐖𝐄𝐃) 𝐗 𝐘𝐔𝐓𝐀 𝐎𝐊𝐊𝐎𝐓𝐒𝐔.m4a",
+    "title": "A Stranger's Kindness Leads To Danger Part 1",
+    "creator_watermark_applied": true,
+    "creator_watermark_name": "CHIMERAVFX"
+  },
+  "publishing": {
+    "provider": "zernio",
+    "status": "partial",
+    "mode": "publish_now",
+    "scheduled_for": null,
+    "timezone": "UTC",
+    "idempotency_key": "clipforge-manual-1787666813827-mt9276bx",
+    "updated_at_epoch": 1787692218,
+    "media": {
+      "filename": "final.mp4",
+      "size_bytes": 96979303,
+      "public_url_present": true
+    },
+    "metadata": {
+      "title": "A Stranger's Kindness Leads To Danger Part 1",
+      "caption": "A Stranger's Kindness Leads To Danger Part 1",
+      "hashtags": [
+        "#nollywood",
+        "#shortfilm",
+        "#drama",
+        "#kindness",
+        "#football",
+        "#relatable"
+      ],
+      "tags": [
+        "nollywood drama",
+        "african movie",
+        "short story",
+        "football player injury",
+        "kindness rewarded",
+        "mimi and gerald",
+        "secret relationship",
+        "viral drama skit",
+        "african short film",
+        "unexpected kindness"
+      ],
+      "metadata_source": {
+        "title": "production.json.title",
+        "caption": "production.json.title",
+        "hashtags": "production.json.hashtags",
+        "tags": "production.json.youtube_tags"
+      }
+    },
+    "posts": [
+      {
+        "post_id": "6a8ded7340d8737a0342dad9",
+        "status": "failed",
+        "scheduled_for": "2026-08-25T19:30:54.447Z",
+        "timezone": "UTC",
+        "platforms": [
+          {
+            "platform": "tiktok",
+            "accountId": {
+              "_id": "6a8cff1e77555aae012e87b3",
+              "platform": "tiktok",
+              "profileId": "6a8cfeddd01efe5f80893d9b",
+              "displayName": "NollyDecoded 🎬🇳🇬",
+              "isActive": true,
+              "profilePicture": "https://p16-common-sign.tiktokcdn.com/tos-alisg-avt-0068/c36c96d5e15870c04057d9449a44b92d~tplv-tiktokx-cropcenter:168:168.jpeg?dr=14577&refresh_token=4bd9fea1&x-expires=1787806800&x-signature=GQ5kmhOD2MWkUjf9nuY%2FhEn5n3E%3D&t=4d5b0474&ps=13740610&shp=a5d48078&shcp=8aecc5ac&idc=my2",
+              "username": "nolly.decoded"
+            },
+            "status": "failed"
+          }
+        ],
+        "platform": "tiktok",
+        "request_id": "clipforge-manual-1787666813827-mt9276bx-tiktok"
+      },
+      {
+        "post_id": "6a8ded790aa44587538e7bf4",
+        "status": "published",
+        "scheduled_for": "2026-08-25T19:31:00.580Z",
+        "timezone": "UTC",
+        "platforms": [
+          {
+            "platform": "youtube",
+            "accountId": {
+              "_id": "6a8cff4277555aae012e8a8d",
+              "profileId": "6a8cfeddd01efe5f80893d9b",
+              "platform": "youtube",
+              "displayName": "NollyDecoded",
+              "isActive": true,
+              "profilePicture": "https://yt3.ggpht.com/TQT0HOg4HnBGxPzhL9ECdIvM6gMnb0mmzdAhHZbBbRqyJxdXt6FaHFy2253ovfdTVXHl8xRUVIw=s88-c-k-c0x00ffffff-no-rj",
+              "username": "nollydecodedng"
+            },
+            "status": "published",
+            "platformPostId": "O0lFzPfUkdY",
+            "platformPostUrl": "https://www.youtube.com/watch?v=O0lFzPfUkdY"
+          }
+        ],
+        "platform": "youtube",
+        "request_id": "clipforge-manual-1787666813827-mt9276bx-youtube"
+      }
+    ],
+    "metadata_source": "jobs/manual-1787666813827/production.json"
+  }
+}

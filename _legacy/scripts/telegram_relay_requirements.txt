@@ -1,0 +1,6 @@
+# Minimal dependencies for the central temporary Telegram relay.
+# Keep this separate from Stage A's transcription stack to preserve runner disk.
+requests>=2.32,<3
+telethon>=1.44,<2
+cryptg>=0.4,<1
+cryptography>=43,<47

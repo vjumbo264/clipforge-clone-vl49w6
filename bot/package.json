@@ -1,0 +1,17 @@
+{
+  "name": "clipforge-bot",
+  "version": "0.0.1",
+  "private": true,
+  "description": "ClipForge Telegram bot (Bot A + Bot B). Cloudflare Workers. This package is grown incrementally across build sessions; today it only contains the shared validators and job state helpers from the contracts_and_schemas phase.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test 'test/*.mjs'"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-sealedbox-js": "^1.2.0"
+  }
+}

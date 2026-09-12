@@ -1,0 +1,59 @@
+{
+  "initiative": "stage-b-output-fix-and-deploy-alert-investigation",
+  "current_step": "complete",
+  "issue_1_output_corruption": {
+    "verified_against_current_file": true,
+    "fix_status": "complete",
+    "other_instances_found": [],
+    "verification_method": "Extracted the real relmeta step body from .github/workflows/stage-b.yml into a standalone script, ran it with a mocked `gh api` returning a release payload with no source_input.bin/original.* asset for all 10 attempts (bug-69 omitted-source path), and validated the resulting $GITHUB_OUTPUT file against GitHub's documented format rules (every non-empty line must match ^[A-Za-z_][A-Za-z0-9_]*= or be part of a key<<DELIMITER heredoc block). Also reconstructed the ORIGINAL pre-fix variant and ran it through the same harness.",
+    "verification_result": "PASS. Original logic wrote the invalid line \"Attempt 10: no source asset in release — will re-fetch from the saved source reference (bug-69 omitted-source path).\" into $GITHUB_OUTPUT, failing validation with exactly the operator's reported 'Invalid format' error. Fixed logic validates cleanly (release_url/orig_name/orig_id/source_found=false only), preserves source_found=false so the downstream re-fetch step's `if: steps.relmeta.outputs.source_found == 'false'` condition still works, and routes the diagnostic message to stdout only. YAML re-parsed successfully. Full audit of stage-a.yml, stage-b.yml, publish.yml, cleanup.yml, diagnostics.yml, news-push.yml, telegram-relay.yml, deploy-bots.yml found no other instance of a diagnostic echo inside a $GITHUB_OUTPUT redirect block.",
+    "commits": ["912d5c7"]
+  },
+  "issue_2_investigation": {
+    "runs_examined": [
+      {
+        "run_url": "https://github.com/motionssalt/clipforge/actions/runs/33221993330",
+        "trigger": "push to main (run_attempt 1, triggering_actor motionssalt), 2026-08-28T23:56:03Z",
+        "commit": "1c4d56e (bug-55: default transcript language is 'en', not auto-detect)",
+        "actual_failure": "Step 'Deploy Bot A Worker': wrangler failed to parse bot/wrangler.bot-a.jsonc — '✘ [ERROR] PropertyNameExpected' at line 31. Confirmed by parsing the file at commit 1c4d56e: illegal trailing comma in the d1_databases array (the exact defect bug-62 later fixed). The alert step then fired once and paged the owner — correct behavior."
+      },
+      {
+        "run_url": "https://github.com/motionssalt/clipforge/actions/runs/33226057397",
+        "trigger": "push to main (run_attempt 1, triggering_actor motionssalt), 2026-08-29T01:18:37Z",
+        "commit": "7ca0135 (bug-56: reword series continuity context prefix)",
+        "actual_failure": "Step 'Deploy Bot A Worker': same wrangler JSONC parse error — the trailing-comma defect was still present at 7ca0135 (verified by parsing the file at that commit). Distinct push, same genuine underlying defect."
+      },
+      {
+        "run_url": "https://github.com/motionssalt/clipforge/actions/runs/33264452370",
+        "trigger": "push to main (run_attempt 1, triggering_actor motionssalt), 2026-08-29T17:00:01Z",
+        "commit": "895eace (clipforge: bug-62 fix reclaim-stale-task-labels JSONC parse (trailing comma))",
+        "actual_failure": "Step 'Deploy Bot A Worker': esbuild build failure — '✘ [ERROR] Build failed with 2 errors: Cannot assign to \"job\" because it is a constant' in bot source. The JSONC defect was already fixed at this commit (file parses cleanly); this was a DIFFERENT, genuine build defect in the pushed code."
+      },
+      {
+        "run_url": "https://github.com/motionssalt/clipforge/actions/runs/33264580669",
+        "trigger": "push to main (run_attempt 1, triggering_actor motionssalt), 2026-08-29T17:02:39Z",
+        "commit": "13cc506 (clipforge: bug-63 skip deploy-bots deploy+alert steps on Shadow Clones)",
+        "actual_failure": "Step 'Deploy Bot A Worker': same esbuild 'Cannot assign to \"job\" because it is a constant' build failure — the fix commit for the build error had not landed yet."
+      },
+      {
+        "run_url": "https://github.com/motionssalt/clipforge/actions/runs/33268929381",
+        "trigger": "push to main (run_attempt 1, triggering_actor motionssalt), 2026-08-29T18:41:03Z",
+        "commit": "e763da3 (clipforge: bug-65 done — sweep complete)",
+        "actual_failure": "Step 'Deploy Bot A Worker': same esbuild 'Cannot assign to \"job\" because it is a constant' build failure — last push before the build fix landed."
+      }
+    ],
+    "conclusion": "All five alerts are GENUINE, DISTINCT deploy failures on five consecutive pushes during the 2026-08-28/29 bug-fix sprint — NOT re-runs, NOT cron, NOT duplicate alerting. Each run was event=push, run_attempt=1, on a distinct head_sha, and each failed at the 'Deploy Bot A Worker' step for that commit's own real defect: runs 1-2 hit the wrangler.bot-a.jsonc illegal trailing comma (fixed by bug-62, commit 895eace), runs 3-5 hit an esbuild 'Cannot assign to \"job\" because it is a constant' build error in bot source (fixed in the bug-63/65-era commits). The 'recent timestamps on old commits' mismatch is explained by the repo's own bot automation committing many times per day: those five commits only LOOK old because hundreds of automated job-status commits (clipforge: job ... / plan uploaded / cleanup) have landed since. No scheduled workflow, branch rule, or manual re-run was involved — run_attempt was 1 for all five and the event was push for all five. The alert step fired exactly once per failed run, per failed job — no duplicate alerting (the step is not in a matrix, has no retry, and its if: failure() && github.repository == 'motionssalt/clipforge' condition evaluates once per run). The pipeline has since recovered: the 20 most recent Deploy Bots runs (2026-08-30 through 2026-08-31T01:15Z, including run 33347025302 at f8f616c) are all green, confirming both underlying defects are fixed and the alerts have already stopped on their own. The operator's 'unnecessary errors' were in fact the safeguard correctly reporting a real, then-broken deploy pipeline; the noise ended when the code was fixed, not because of anything wrong with the alert.",
+    "root_cause_category": "c_other",
+    "fix_status": "no_fix_needed",
+    "fix_approach": "No change to the alert step. Rationale: (1) the five alerts each corresponded to a real, distinct deploy-blocking defect on a fresh push — the alert did exactly what it was built for (preventing silent Cloudflare Workers drift), and had it been deduped/rate-limited the operator could have missed that push #2..5 ALSO failed to deploy; (2) per the investigation, no re-run/cron/duplicate mechanism exists, so there is no alert-side bug to fix; (3) the noise has already stopped empirically — 20 consecutive green Deploy Bots runs since 2026-08-30, including the latest at f8f616c (run 33347025302). Adding a dedup/time-window mechanism would be speculative complexity the evidence does not support, and it carries real risk: a burst of distinct broken pushes would page only once, hiding subsequent failures. Documented here instead. If a genuine alert-storm pattern ever emerges (same commit re-alerted, or one failure paged multiple times), that would be a new defect to investigate with run data at that time.",
+    "commits": []
+  },
+  "human_review_items": [
+    "Operator-facing summary for the relay group: the five deploy-blocked alerts on 2026-08-28/29 were five real deploy failures during the bug-55..65 sprint (2x wrangler JSONC trailing comma, 3x esbuild const-assignment build error), one alert per failed push. Both defects are fixed and Deploy Bots has been green for 20 consecutive runs since 2026-08-30, so no further alerts are expected unless a new push genuinely breaks the deploy."
+  ],
+  "resume_from": {
+    "file": "STAGE_B_ALERT_FIX_PROGRESS.json",
+    "component": "none",
+    "next_operation": "Initiative complete: Issue 1 fixed+verified+pushed (912d5c7), Issue 2 investigated with real run data and concluded no_fix_needed. No further work."
+  }
+}

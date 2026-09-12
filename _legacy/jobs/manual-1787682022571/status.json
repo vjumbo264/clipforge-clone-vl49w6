@@ -1,0 +1,30 @@
+{
+  "job_id": "manual-1787682022571",
+  "stage": "awaiting_json_upload",
+  "message": "Stage A complete. Open the Release, hand it to your agent, then upload production.json to start Stage B.",
+  "release_tag": "clipforge-manual-1787682022571",
+  "release_url": "https://github.com/motionssalt/clipforge/releases/tag/clipforge-manual-1787682022571",
+  "assets": {
+    "00_READ_THIS_FIRST.txt": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787682022571/00_READ_THIS_FIRST.txt",
+    "key_moments.json": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787682022571/key_moments.json",
+    "original.mp4": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787682022571/original.mp4",
+    "scene_index.json": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787682022571/scene_index.json",
+    "screenshots.zip": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787682022571/screenshots.zip",
+    "transcript.json": "https://github.com/motionssalt/clipforge/releases/download/clipforge-manual-1787682022571/transcript.json"
+  },
+  "created_at_epoch": 1787688436,
+  "updated_at_epoch": 1787690794,
+  "expires_at_epoch": 1787731636,
+  "extra": {
+    "workflow_run_id": "32893263086",
+    "workflow_run_url": "https://github.com/motionssalt/clipforge/actions/runs/32893263086",
+    "automatic_mode": "false",
+    "workflow_phase": "stage_a",
+    "duration_seconds": "6702",
+    "screenshot_count": "1117",
+    "event_frame_count": "57",
+    "shot_count": "1647",
+    "key_moment_count": "60",
+    "original_asset_name": "original.mp4"
+  }
+}

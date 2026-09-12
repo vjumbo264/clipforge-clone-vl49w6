@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "job_id": "automatic-1787692652625",
+  "torrent_name": "Rick and Morty - S04 - 2160p HDR Ai Upscale -Mesc",
+  "video_candidates": [
+    {
+      "index": 1,
+      "path": "Rick and Morty - S04E09 - Childrick of Mort - 2160p HDR Ai Upscale -Mesc.mkv",
+      "length": 1748430201
+    },
+    {
+      "index": 3,
+      "path": "Rick and Morty - S04E01 - Edge of Tomorty- Rick Die Rickpeat - 2160p HDR Ai Upscale -Mesc.mkv",
+      "length": 1592863062
+    },
+    {
+      "index": 4,
+      "path": "Rick and Morty - S04E02 - The Old Man and the Seat - 2160p HDR Ai Upscale -Mesc.mkv",
+      "length": 1419819361
+    },
+    {
+      "index": 5,
+      "path": "Rick and Morty - S04E03 - One Crew Over the Crewcoo's Morty - 2160p HDR Ai Upscale -Mesc .mkv",
+      "length": 1480837637
+    },
+    {
+      "index": 6,
+      "path": "Rick and Morty - S04E04 - Claw and Hoarder- Special Ricktim's Morty - 2160p HDR Ai Upscale -Mesc .mkv",
+      "length": 1579249100
+    },
+    {
+      "index": 7,
+      "path": "Rick and Morty - S04E05 -  Rattlestar Ricklactica - 2160p HDR Ai Upscale -Mesc.mkv",
+      "length": 1461957826
+    },
+    {
+      "index": 8,
+      "path": "Rick and Morty - S04E06 -  Never Ricking Morty - 2160p HDR Ai Upscale -Mesc.mkv",
+      "length": 1544020878
+    },
+    {
+      "index": 9,
+      "path": "Rick and Morty - S04E07 - Promortyus - 2160p HDR Ai Upscale -Mesc.mkv",
+      "length": 1626252503
+    },
+    {
+      "index": 10,
+      "path": "Rick and Morty - S04E08 - The Vat of Acid Episode - 2160p HDR Ai Upscale -Mesc.mkv",
+      "length": 1513240870
+    },
+    {
+      "index": 12,
+      "path": "Rick and Morty - S04E10 - Star Mort- Rickturn of the Jerri - 2160p HDR Ai Upscale -Mesc.mkv",
+      "length": 1543769461
+    }
+  ],
+  "selected_index": null,
+  "stage_a_inputs": {
+    "whisper_model": "base",
+    "language": "auto",
+    "target_duration_seconds": "60",
+    "focus": ""
+  }
+}

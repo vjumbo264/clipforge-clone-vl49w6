@@ -1,0 +1,392 @@
+name: Zernio publishing
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Operation: discover, publish, retry, update, or cancel"
+        required: true
+        type: choice
+        options:
+          - discover
+          - publish
+          - retry
+          - update
+          - cancel
+        default: publish
+      job_id:
+        description: "ClipForge job id (required except discover)"
+        required: false
+        type: string
+      mode:
+        description: "Mode for new or updated posts"
+        required: false
+        type: choice
+        options:
+          - publish_now
+          - manual_schedule
+          - smart_schedule
+        default: publish_now
+      scheduled_for:
+        description: "Local ISO-8601 timestamp for manual scheduling"
+        required: false
+        type: string
+      timezone:
+        description: "IANA timezone for manual and smart scheduling"
+        required: false
+        type: string
+        default: UTC
+      targets_json:
+        description: "JSON array of {platform, account_ids} for a new publish"
+        required: false
+        type: string
+        default: "[]"
+      post_id:
+        description: "Existing Zernio post id for retry, update, or cancel"
+        required: false
+        type: string
+      request_id:
+        description: "Stable idempotency key for a logical new publish attempt"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+# A single durable queue must be updated serially. This also removes the race
+# where two completed Stage B jobs could calculate the same smart-schedule slot.
+concurrency:
+  group: clipforge-zernio-publishing
+  cancel-in-progress: false
+
+env:
+  ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+  ZERNIO_API_BASE: https://zernio.com/api/v1
+
+jobs:
+  zernio:
+    name: Zernio ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout latest publishing implementation
+        uses: actions/checkout@v4
+        with:
+          # JOB_ID still addresses the completed job's committed metadata and
+          # release artifact. The code always comes from current main so a
+          # recovery dispatch never reuses a known-buggy workflow revision.
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate request and secret presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ZERNIO_API_KEY:-}" || { echo "ZERNIO_API_KEY is not configured in repository Actions secrets." >&2; exit 1; }
+          action='${{ inputs.action }}'
+          if [[ "$action" != discover && -z '${{ inputs.job_id }}' ]]; then
+            echo "job_id is required for $action" >&2
+            exit 1
+          fi
+          if [[ "$action" == retry || "$action" == update || "$action" == cancel ]]; then
+            test -n '${{ inputs.post_id }}' || { echo "post_id is required for $action" >&2; exit 1; }
+          fi
+
+      - name: Discover active TikTok and YouTube accounts
+        if: inputs.action == 'discover'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/zernio_publish.py discover > /tmp/zernio_accounts.json
+          python - <<'PY'
+          import json, time
+          from pathlib import Path
+          data = json.loads(Path('/tmp/zernio_accounts.json').read_text(encoding='utf-8'))
+          accounts = []
+          for account in data.get('accounts', []):
+              if account.get('platform') in {'tiktok', 'youtube'}:
+                  accounts.append(account)
+          Path('branding').mkdir(exist_ok=True)
+          Path('branding/zernio_accounts.json').write_text(json.dumps({
+              'version': 1,
+              'provider': 'zernio',
+              'updated_at_epoch': int(time.time()),
+              'accounts': accounts,
+          }, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          print(f'Persisted {len(accounts)} TikTok/YouTube account records (no API secret stored).')
+          PY
+
+      - name: Commit discovered accounts
+        if: inputs.action == 'discover'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --rebase --autostash || true
+          git add branding/zernio_accounts.json
+          git commit -m 'clipforge: refresh Zernio account snapshot' || echo 'No account changes.'
+          git push
+
+      - name: Load and validate completed Stage B job
+        if: inputs.action != 'discover'
+        shell: bash
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          jid = os.environ['JOB_ID']
+          status_path = Path('jobs') / jid / 'status.json'
+          if not status_path.exists():
+              raise SystemExit(f'Missing {status_path}')
+          status = json.loads(status_path.read_text(encoding='utf-8'))
+          if status.get('stage') != 'complete':
+              raise SystemExit('Zernio publishing requires Stage B status=complete; Stage B remains independent.')
+          if not (Path('jobs') / jid / 'production.json').exists():
+              raise SystemExit('Missing the job production.json used to create this output.')
+          if not status.get('release_tag'):
+              raise SystemExit('Completed job has no release_tag.')
+          PY
+          mkdir -p work/zernio
+
+      - name: Download final MP4 for new publishing only
+        if: inputs.action == 'publish'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "clipforge-${{ inputs.job_id }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'final.mp4' \
+            --dir work/zernio \
+            --clobber
+          test -s work/zernio/final.mp4
+
+      - name: Resolve publishing settings and native schedule
+        if: inputs.action == 'publish'
+        id: schedule
+        shell: bash
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_SCHEDULED_FOR: ${{ inputs.scheduled_for }}
+          INPUT_TIMEZONE: ${{ inputs.timezone }}
+        run: |
+          set -euo pipefail
+          test -f branding/zernio_settings.json || { echo 'Missing branding/zernio_settings.json.' >&2; exit 1; }
+          mode="$INPUT_MODE"
+          timezone="$INPUT_TIMEZONE"
+          scheduled_for="$INPUT_SCHEDULED_FOR"
+          if [ "$mode" = 'smart_schedule' ]; then
+            # Native Zernio scheduled posts are occupied slots too. The local
+            # repository ledger reserves ClipForge's N-day cadence; this fresh
+            # provider query catches posts created outside ClipForge.
+            python scripts/zernio_publish.py scheduled > work/zernio/external_scheduled.json
+            python scripts/zernio_schedule.py branding/zernio_settings.json branding/zernio_queue.json \
+              --external-posts work/zernio/external_scheduled.json > work/zernio/schedule.json
+            scheduled_for="$(python -c "import json; print(json.load(open('work/zernio/schedule.json'))['scheduled_for'])")"
+            timezone="$(python -c "import json; print(json.load(open('work/zernio/schedule.json'))['timezone'])")"
+          fi
+          if [ "$mode" = 'manual_schedule' ] && [ -z "$scheduled_for" ]; then
+            echo 'manual_schedule requires scheduled_for.' >&2
+            exit 1
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "scheduled_for=$scheduled_for" >> "$GITHUB_OUTPUT"
+          echo "timezone=$timezone" >> "$GITHUB_OUTPUT"
+
+      - name: Mark publishing as requested without changing Stage B state
+        if: inputs.action == 'publish'
+        shell: bash
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          MODE: ${{ steps.schedule.outputs.mode }}
+          SCHEDULED_FOR: ${{ steps.schedule.outputs.scheduled_for }}
+          TIMEZONE: ${{ steps.schedule.outputs.timezone }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, time
+          from pathlib import Path
+          jid = os.environ['JOB_ID']
+          p = Path('jobs') / jid / 'status.json'
+          status = json.loads(p.read_text(encoding='utf-8'))
+          status['publishing'] = {
+              'provider': 'zernio', 'status': 'requested',
+              'mode': os.environ['MODE'],
+              'scheduled_for': os.environ['SCHEDULED_FOR'] or None,
+              'timezone': os.environ['TIMEZONE'] or None,
+              'idempotency_key': os.environ['REQUEST_ID'] or None,
+              'updated_at_epoch': int(time.time()),
+          }
+          status['updated_at_epoch'] = int(time.time())
+          p.write_text(json.dumps(status, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          PY
+
+      - name: Create native Zernio post records
+        if: inputs.action == 'publish'
+        id: publish
+        shell: bash
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          TARGETS_JSON: ${{ inputs.targets_json }}
+          MODE: ${{ steps.schedule.outputs.mode }}
+          SCHEDULED_FOR: ${{ steps.schedule.outputs.scheduled_for }}
+          TIMEZONE: ${{ steps.schedule.outputs.timezone }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          targets="$TARGETS_JSON"
+          if [[ "$targets" == '[]' || -z "$targets" ]]; then
+            echo 'targets_json must include at least one selected TikTok or YouTube account.' >&2
+            exit 1
+          fi
+          python scripts/zernio_publish.py publish \
+            "jobs/$JOB_ID/production.json" work/zernio/final.mp4 "$targets" \
+            --mode "$MODE" --scheduled-for "$SCHEDULED_FOR" --timezone "$TIMEZONE" \
+            --request-id "$REQUEST_ID" > work/zernio/result.json
+          python -m json.tool work/zernio/result.json >/dev/null
+
+      - name: Retry an existing Zernio post
+        if: inputs.action == 'retry'
+        id: retry
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/zernio_publish.py retry '${{ inputs.post_id }}' > work/zernio/result.json
+          python -m json.tool work/zernio/result.json >/dev/null
+
+      - name: Update an existing Zernio schedule or publish now
+        if: inputs.action == 'update'
+        id: update
+        shell: bash
+        run: |
+          set -euo pipefail
+          mode='${{ inputs.mode }}'
+          if [[ "$mode" != publish_now && "$mode" != manual_schedule ]]; then
+            echo 'Update mode must be publish_now or manual_schedule.' >&2
+            exit 1
+          fi
+          python scripts/zernio_publish.py update '${{ inputs.post_id }}' \
+            --mode "$mode" --scheduled-for '${{ inputs.scheduled_for }}' \
+            --timezone '${{ inputs.timezone }}' > work/zernio/result.json
+          python -m json.tool work/zernio/result.json >/dev/null
+
+      - name: Cancel one scheduled Zernio post
+        if: inputs.action == 'cancel'
+        id: cancel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/zernio_publish.py cancel '${{ inputs.post_id }}' > work/zernio/result.json
+          python -m json.tool work/zernio/result.json >/dev/null
+
+      - name: Persist publishing state and schedule ledger without changing Stage B state
+        if: always() && inputs.action != 'discover'
+        shell: bash
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          ACTION: ${{ inputs.action }}
+          MODE: ${{ steps.schedule.outputs.mode || inputs.mode }}
+          SCHEDULED_FOR: ${{ steps.schedule.outputs.scheduled_for || inputs.scheduled_for }}
+          TIMEZONE: ${{ steps.schedule.outputs.timezone || inputs.timezone }}
+          POST_ID: ${{ inputs.post_id }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+          RETRY_OUTCOME: ${{ steps.retry.outcome }}
+          UPDATE_OUTCOME: ${{ steps.update.outcome }}
+          CANCEL_OUTCOME: ${{ steps.cancel.outcome }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, time
+          from pathlib import Path
+          from scripts.zernio_state import default_queue, remove_queue_item, upsert_queue_item
+          from scripts.zernio_publish import aggregate_publishing_status
+          from scripts.zernio_workflow_state import publishing_error_state, read_json_object_safely
+
+          jid = os.environ['JOB_ID']
+          action = os.environ['ACTION']
+          status_path = Path('jobs') / jid / 'status.json'
+          status = json.loads(status_path.read_text(encoding='utf-8'))
+          prior = status.get('publishing') if isinstance(status.get('publishing'), dict) else {}
+          result_path = Path('work/zernio/result.json')
+          # A failed publisher can leave the redirected file absent, blank, or
+          # malformed. Never allow this cleanup/status step to obscure its
+          # original error with a second JSONDecodeError.
+          result = read_json_object_safely(result_path)
+
+          if action == 'publish' and isinstance(result, dict):
+              publishing = result
+              publishing['metadata_source'] = 'jobs/' + jid + '/production.json'
+              publishing['mode'] = os.environ['MODE']
+              publishing['scheduled_for'] = os.environ['SCHEDULED_FOR'] or publishing.get('scheduled_for')
+              publishing['timezone'] = os.environ['TIMEZONE'] or publishing.get('timezone')
+          elif action in {'retry', 'update', 'cancel'} and isinstance(result, dict):
+              posts = prior.get('posts') if isinstance(prior.get('posts'), list) else []
+              replacement = dict(result)
+              replacement['post_id'] = result.get('post_id') or os.environ['POST_ID']
+              found = False
+              updated = []
+              for post in posts:
+                  if isinstance(post, dict) and str(post.get('post_id') or '') == str(replacement['post_id']):
+                      merged = dict(post); merged.update(replacement); updated.append(merged); found = True
+                  else:
+                      updated.append(post)
+              if not found:
+                  updated.append(replacement)
+              publishing = dict(prior)
+              publishing['provider'] = 'zernio'
+              publishing['posts'] = updated
+              publishing['status'] = aggregate_publishing_status(updated)
+              if action == 'update':
+                  publishing['mode'] = os.environ['MODE']
+                  publishing['scheduled_for'] = result.get('scheduled_for') or os.environ['SCHEDULED_FOR'] or None
+                  publishing['timezone'] = result.get('timezone') or os.environ['TIMEZONE'] or None
+              publishing['updated_at_epoch'] = int(time.time())
+          else:
+              publishing = publishing_error_state(prior)
+
+          status['publishing'] = publishing
+          status['updated_at_epoch'] = int(time.time())
+          status_path.write_text(json.dumps(status, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
+          queue_path = Path('branding/zernio_queue.json')
+          try:
+              queue = json.loads(queue_path.read_text(encoding='utf-8')) if queue_path.exists() else default_queue()
+          except json.JSONDecodeError:
+              queue = default_queue()
+          post_ids = [str(p.get('post_id') or '') for p in publishing.get('posts', []) if isinstance(p, dict) and p.get('post_id')]
+          pstatus = str(publishing.get('status') or 'unknown')
+          if pstatus in {'scheduled', 'publishing', 'partial'}:
+              queue = upsert_queue_item(queue, {
+                  'job_id': jid, 'status': pstatus,
+                  'mode': publishing.get('mode') or os.environ['MODE'],
+                  'scheduled_for': publishing.get('scheduled_for') or os.environ['SCHEDULED_FOR'] or None,
+                  'timezone': publishing.get('timezone') or os.environ['TIMEZONE'] or 'UTC',
+                  'post_ids': post_ids, 'updated_at_epoch': int(time.time()),
+              })
+          elif pstatus in {'published', 'failed', 'cancelled'}:
+              queue = remove_queue_item(queue, jid)
+          queue_path.parent.mkdir(exist_ok=True)
+          queue_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --rebase --autostash || true
+          git add "jobs/$JOB_ID/status.json" branding/zernio_queue.json
+          git commit -m "clipforge: job $JOB_ID Zernio publishing state" || echo 'No publishing state changes.'
+          git push || echo 'WARN: could not persist Zernio state; rerun safely with the same job/post identifiers.' >&2
+
+      - name: Fail a new publish after durable state persistence
+        if: inputs.action == 'publish' && steps.publish.outcome == 'failure'
+        shell: bash
+        run: exit 1

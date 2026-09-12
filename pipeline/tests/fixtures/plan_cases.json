@@ -1,0 +1,371 @@
+{
+  "description": "Language-neutral fixtures for the production.json validator. Both pipeline/plan/schema.py and bot/src/plan.js must return the same error strings for the same document. Cases labelled valid=true expect zero errors; the rest list the exact error strings the validators must emit (order-independent).",
+  "cases": [
+    {
+      "name": "minimal_valid",
+      "valid": true,
+      "document": {
+        "video_duration_seconds": 120,
+        "target_total_duration_seconds": 30,
+        "cuts": [
+          { "start_seconds": 0, "end_seconds": 10, "voiceover_text": "hello" },
+          { "start_seconds": 20, "end_seconds": 30, "voiceover_text": "world" }
+        ]
+      }
+    },
+    {
+      "name": "valid_with_tags",
+      "valid": true,
+      "document": {
+        "video_duration_seconds": 200,
+        "target_total_duration_seconds": 60,
+        "cuts": [
+          { "start_seconds": 5, "end_seconds": 15, "voiceover_text": "line" }
+        ],
+        "hashtags": ["#one", "#two", "#three", "#four", "#five"],
+        "youtube_tags": ["a1", "b2", "c3", "d4", "e5", "f6", "g7", "h8", "i9", "j10"]
+      }
+    },
+    {
+      "name": "valid_legacy_raw_narration",
+      "valid": true,
+      "document": {
+        "video_duration_seconds": 60,
+        "target_total_duration_seconds": 20,
+        "cuts": [
+          { "start_seconds": 0, "end_seconds": 20, "raw_narration": "legacy narrator" }
+        ]
+      }
+    },
+    {
+      "name": "valid_series_nested_shape",
+      "valid": true,
+      "document": {
+        "video_duration_seconds": 300,
+        "target_total_duration_seconds": 60,
+        "series": {
+          "series_id": "abc",
+          "part": 2,
+          "start_seconds": 100,
+          "end_seconds": 200,
+          "is_final": false,
+          "summary": "prior part summary"
+        },
+        "cuts": [
+          { "start_seconds": 110, "end_seconds": 150, "voiceover_text": "part two" }
+        ]
+      }
+    },
+    {
+      "name": "valid_series_legacy_flat_shape",
+      "valid": true,
+      "document": {
+        "video_duration_seconds": 300,
+        "target_total_duration_seconds": 60,
+        "series_id": "abc",
+        "series_part": 2,
+        "series_start_seconds": 100,
+        "series_end_seconds": 200,
+        "series_final": false,
+        "series_summary": "prior part summary",
+        "cuts": [
+          { "start_seconds": 110, "end_seconds": 150, "voiceover_text": "part two" }
+        ]
+      }
+    },
+    {
+      "name": "reject_top_level_not_object",
+      "valid": false,
+      "document": [1, 2, 3],
+      "expected_errors": ["Top level must be a JSON object."]
+    },
+    {
+      "name": "reject_missing_scalars",
+      "valid": false,
+      "document": { "cuts": [{ "start_seconds": 0, "end_seconds": 5, "voiceover_text": "x" }] },
+      "expected_errors": [
+        "`video_duration_seconds` must be a positive integer.",
+        "`target_total_duration_seconds` must be a positive integer."
+      ]
+    },
+    {
+      "name": "reject_non_integer_scalars",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 1.5,
+        "target_total_duration_seconds": "60",
+        "cuts": [{ "start_seconds": 0, "end_seconds": 5, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "`video_duration_seconds` must be a positive integer.",
+        "`target_total_duration_seconds` must be a positive integer."
+      ]
+    },
+    {
+      "name": "reject_title_present_empty",
+      "valid": false,
+      "document": {
+        "title": "",
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "cuts": [{ "start_seconds": 0, "end_seconds": 10, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "`title` must be a non-empty string when present (or omit it entirely)."
+      ]
+    },
+    {
+      "name": "reject_empty_cuts",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "cuts": []
+      },
+      "expected_errors": ["`cuts` is empty — at least one cut is required."]
+    },
+    {
+      "name": "reject_cuts_not_array",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "cuts": "not-an-array"
+      },
+      "expected_errors": ["`cuts` must be an array."]
+    },
+    {
+      "name": "reject_cut_end_before_start",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "cuts": [{ "start_seconds": 30, "end_seconds": 10, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "cuts[0].end_seconds must be greater than start_seconds."
+      ]
+    },
+    {
+      "name": "reject_cut_end_exceeds_duration",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 20,
+        "target_total_duration_seconds": 10,
+        "cuts": [{ "start_seconds": 5, "end_seconds": 100, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "cuts[0].end_seconds exceeds video_duration_seconds."
+      ]
+    },
+    {
+      "name": "reject_cut_negative_start",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "cuts": [{ "start_seconds": -1, "end_seconds": 10, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "cuts[0].start_seconds must be at least 0."
+      ]
+    },
+    {
+      "name": "reject_overlapping_cuts",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "cuts": [
+          { "start_seconds": 0, "end_seconds": 30, "voiceover_text": "a" },
+          { "start_seconds": 20, "end_seconds": 40, "voiceover_text": "b" }
+        ]
+      },
+      "expected_errors": [
+        "cuts[1] overlaps or precedes the prior cut."
+      ]
+    },
+    {
+      "name": "reject_cut_missing_voiceover",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "cuts": [{ "start_seconds": 0, "end_seconds": 10 }]
+      },
+      "expected_errors": [
+        "cuts[0].voiceover_text must be a non-empty string (legacy raw_narration accepted)."
+      ]
+    },
+    {
+      "name": "reject_cut_non_integer_bounds",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "cuts": [{ "start_seconds": 1.5, "end_seconds": "10", "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "cuts[0].start_seconds must be an integer.",
+        "cuts[0].end_seconds must be an integer."
+      ]
+    },
+    {
+      "name": "reject_hashtags_too_few",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "hashtags": ["#a", "#b"],
+        "cuts": [{ "start_seconds": 0, "end_seconds": 10, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "`hashtags` must contain between 5 and 8 entries."
+      ]
+    },
+    {
+      "name": "reject_hashtag_missing_hash_and_whitespace",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "hashtags": ["one", "#two", "#three", "#four", "#five with space"],
+        "cuts": [{ "start_seconds": 0, "end_seconds": 10, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "hashtags[0] must start with #.",
+        "hashtags[4] must not contain whitespace."
+      ]
+    },
+    {
+      "name": "reject_hashtags_duplicate_case_insensitive",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "hashtags": ["#one", "#Two", "#three", "#four", "#TWO"],
+        "cuts": [{ "start_seconds": 0, "end_seconds": 10, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "hashtags[4] duplicates an earlier entry."
+      ]
+    },
+    {
+      "name": "reject_youtube_tags_forbidden_hash_and_comma",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "youtube_tags": ["#hash", "com,ma", "c", "d", "e", "f", "g", "h", "i", "j"],
+        "cuts": [{ "start_seconds": 0, "end_seconds": 10, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "youtube_tags[0] must not start with #.",
+        "youtube_tags[1] must not contain ,."
+      ]
+    },
+    {
+      "name": "reject_youtube_tags_too_few",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 100,
+        "target_total_duration_seconds": 30,
+        "youtube_tags": ["a", "b", "c"],
+        "cuts": [{ "start_seconds": 0, "end_seconds": 10, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "`youtube_tags` must contain between 10 and 20 entries."
+      ]
+    },
+    {
+      "name": "reject_series_flat_missing_and_bad_types",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 200,
+        "target_total_duration_seconds": 60,
+        "series_id": "",
+        "series_part": 0,
+        "series_start_seconds": -5,
+        "series_end_seconds": -1,
+        "series_final": "yes",
+        "series_summary": "",
+        "cuts": [{ "start_seconds": 0, "end_seconds": 10, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "`series_id` must be a non-empty string for a series production plan.",
+        "`series_part` must be a positive integer for a series production plan.",
+        "`series_start_seconds` must be a non-negative integer for a series production plan.",
+        "`series_end_seconds` must be a non-negative integer for a series production plan.",
+        "`series_final` must be boolean for a series production plan.",
+        "`series_summary` must be a non-empty string for a series production plan."
+      ]
+    },
+    {
+      "name": "reject_series_end_le_start",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 300,
+        "target_total_duration_seconds": 60,
+        "series": {
+          "series_id": "abc",
+          "part": 1,
+          "start_seconds": 100,
+          "end_seconds": 100,
+          "is_final": false,
+          "summary": "x"
+        },
+        "cuts": [{ "start_seconds": 100, "end_seconds": 110, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "`series_end_seconds` must be greater than `series_start_seconds`.",
+        "cuts[0].end_seconds exceeds series_end_seconds."
+      ]
+    },
+    {
+      "name": "reject_cut_outside_series_window",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 300,
+        "target_total_duration_seconds": 60,
+        "series": {
+          "series_id": "abc",
+          "part": 2,
+          "start_seconds": 100,
+          "end_seconds": 200,
+          "is_final": false,
+          "summary": "s"
+        },
+        "cuts": [
+          { "start_seconds": 50, "end_seconds": 250, "voiceover_text": "x" }
+        ]
+      },
+      "expected_errors": [
+        "cuts[0].start_seconds precedes series_start_seconds.",
+        "cuts[0].end_seconds exceeds series_end_seconds."
+      ]
+    },
+    {
+      "name": "reject_series_summary_too_long",
+      "valid": false,
+      "document": {
+        "video_duration_seconds": 300,
+        "target_total_duration_seconds": 60,
+        "series": {
+          "series_id": "abc",
+          "part": 2,
+          "start_seconds": 100,
+          "end_seconds": 200,
+          "is_final": false,
+          "summary": "SUMMARY_PLACEHOLDER"
+        },
+        "cuts": [{ "start_seconds": 110, "end_seconds": 150, "voiceover_text": "x" }]
+      },
+      "expected_errors": [
+        "`series_summary` exceeds the maximum allowed length."
+      ],
+      "post_process": {
+        "expand_summary_to_length": 1201
+      }
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "initiative": "fix-json-reassembly-definitively",
+  "current_step": "complete",
+  "deploy_verification": {
+    "checked": true,
+    "was_1bfb0eb_live_at_operator_test_time": true,
+    "evidence": "GitHub Actions: run 33334971187 for head_sha 1bfb0eb (Deploy Bots) completed 2026-08-30T20:55:15Z with conclusion=success (both wrangler deploy steps gated to central repo run on success). Cloudflare API GET /accounts/<acct>/workers/scripts/clipforge-bot-a/deployments: current 100% deployment id ffeb3c5e-a8b9-4b0e-ba65-d4647accae29, version 8f4f6b5f-86b0-4eac-a086-b1e186934161, created_on 2026-08-30T21:00:07Z, source=wrangler; prior deployment fbd431e2 at 20:56:08Z (the 1bfb0eb run). So 1bfb0eb code WAS live from 20:56:08Z onward \u2014 the operator post-deploy failure was against the fixed code; the defect is real in the code, not a stale deploy. Fetching live worker source via /content was refused for this token type (error 10405, method not allowed for this authentication scheme) \u2014 deploy history + successful workflow run are the evidence instead."
+  },
+  "diagnostic_evidence": {
+    "byte_perfect_test_written": true,
+    "scenarios_tested": [
+      "op-4096-split (2-bubble at Telegram 4096 UTF-16 cap)",
+      "op-4089-split (cap-7)",
+      "op-midstring (inside string value next to space)",
+      "op-midws (inside pretty-print indent run)",
+      "op-3frag-closers (] / } at boundaries)",
+      "op-empty-tail (trailing empty bubble)",
+      "larger-4096-split (16-cut plan, 2 bubbles)",
+      "larger-many-frag (6 fragments)"
+    ],
+    "failing_scenarios": [
+      "PRE-FIX: all 8 operator/larger scenarios FAILED. Captured bot output: \"Telegram could not complete that request: Bad Request: message is too long\" (the uplb indicator carrying base64(fragments) exceeded the 4096-char message cap after fragment 1), then the next bare bubble re-entered with an EMPTY buffer and the trailing fragment parsed alone: \"Not valid JSON: Unexpected token ':'\u2026\" / \"Unexpected token '}'\u2026\" \u2014 the operator's exact reported error class. POST-FIX: all 8 PASS with committed production.json byte-identical to the original paste (compared at byte level against JSON.stringify(JSON.parse(ORIGINAL), null, 2))."
+    ],
+    "root_cause_confirmed": "The accumulated fragment buffer rode INSIDE the uplb flow marker as base64url JSON (cf:uplb:<label>:<b64token>); that marker lives in the receiving-indicator Telegram message text, capped at 4096 UTF-16 units. A multi-KB paste pushed the marker past the cap, Telegram rejected the indicator send/edit (message is too long), the sendForceReply choke point never fired so awaiting_input stayed at upl (empty buffer), and the next bare bubble parsed the trailing fragment ALONE -> Unexpected token. join('') itself and the post-1bfb0eb raw capture were byte-perfect; the defect was marker-carried state exceeding the message-size ceiling (the contract's prime suspect, confirmed)."
+  },
+  "fix": {
+    "status": "complete",
+    "what_was_actually_wrong": "Buffer stored in the Telegram-message-carried uplb marker (base64 of all fragments) \u2014 exceeded the 4096-char message cap on multi-KB plans, breaking the awaiting_input re-anchor. FIX: new D1 table plan_upload_buffer (migration 0003) + storage helpers put/get/deletePlanUploadBuffer; keepPlanPasteAlive persists the buffer to D1 first and uses a constant-size marker cf:uplb:<label>:<fragCount>:<millis> (tiny but changing per fragment \u2014 a constant payload was eaten by deleteAwaitingInputIfUnconsumed, caught by ground-truth A2/B3); uplb case reads the buffer from D1 (legacy b64 arg tolerated/ignored); buffer deleted on success, validation failure, and size overflow. Byte-perfect suite (bot/test/json-reassembly-byteproof.test.mjs) kept as a permanent regression suite.",
+    "commits": [
+      "f8f616c"
+    ]
+  },
+  "verification": {
+    "byte_perfect_suite_passing": true,
+    "larger_plan_tested": true,
+    "full_suite_passing": true,
+    "deployed_and_confirmed_live": true,
+    "evidence": "npm test 210/210 pass (byteproof 8/8 byte-identical commits, plan-paste-ground-truth 9/9). CI: GitHub Actions deploy-bots.yml run 33347025302 for head_sha f8f616c completed conclusion=success. Cloudflare: new 100% deployment 4b7fa618-21a4-4d7b-b239-77adb45ebbd6, created 2026-08-31T01:15:38Z, source=wrangler \u2014 the fix IS live on clipforge-bot-a."
+  },
+  "human_review_items": [
+    "A paste in-flight across THIS deploy loses its D1 buffer (table is new) \u2014 the operator simply re-pastes; one-time edge, documented in code."
+  ],
+  "resume_from": {
+    "file": "",
+    "component": "",
+    "next_operation": "none \u2014 initiative complete: root cause proven by byte-level diagnostic, fix deployed and confirmed live"
+  }
+}

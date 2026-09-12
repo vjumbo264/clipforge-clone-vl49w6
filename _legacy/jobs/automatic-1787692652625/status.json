@@ -1,0 +1,100 @@
+{
+  "job_id": "automatic-1787692652625",
+  "stage": "complete",
+  "message": "Final video is ready (one merged MP4 with voiceover and subtitles).",
+  "release_tag": "clipforge-automatic-1787692652625",
+  "release_url": "https://github.com/motionssalt/clipforge/releases/tag/clipforge-automatic-1787692652625",
+  "assets": {
+    "00_READ_THIS_FIRST.txt": "https://github.com/motionssalt/clipforge/releases/download/clipforge-automatic-1787692652625/00_READ_THIS_FIRST.txt",
+    "key_moments.json": "https://github.com/motionssalt/clipforge/releases/download/clipforge-automatic-1787692652625/key_moments.json",
+    "original.mkv": "https://github.com/motionssalt/clipforge/releases/download/clipforge-automatic-1787692652625/original.mkv",
+    "scene_index.json": "https://github.com/motionssalt/clipforge/releases/download/clipforge-automatic-1787692652625/scene_index.json",
+    "screenshots.zip": "https://github.com/motionssalt/clipforge/releases/download/clipforge-automatic-1787692652625/screenshots.zip",
+    "transcript.json": "https://github.com/motionssalt/clipforge/releases/download/clipforge-automatic-1787692652625/transcript.json",
+    "final_zip": "https://github.com/motionssalt/clipforge/releases/download/clipforge-automatic-1787692652625/clipforge-automatic-1787692652625-final.zip",
+    "final_mp4": "https://github.com/motionssalt/clipforge/releases/download/clipforge-automatic-1787692652625/final.mp4"
+  },
+  "created_at_epoch": 1787692690,
+  "updated_at_epoch": 1787695983,
+  "expires_at_epoch": 1787735890,
+  "extra": {
+    "torrent_selection_path": "jobs/automatic-1787692652625/torrent-selection.json",
+    "workflow_run_id": "32902815946",
+    "workflow_run_url": "https://github.com/motionssalt/clipforge/actions/runs/32902815946",
+    "automatic_mode": "true",
+    "workflow_phase": "stage_b",
+    "automatic_analysis_result": "jobs/automatic-1787692652625/automatic_analysis.json",
+    "production_ref": "path:jobs/automatic-1787692652625/production.json",
+    "music_ref": "path:audio-library/MONTAGEM_LYNARO_FILI__Super_Slowed_.m4a",
+    "music_source": "explicit_library",
+    "original_asset_name": "original.mkv",
+    "title": "Morty's Place-Saving Device Has a Horrifying Secret",
+    "creator_watermark_applied": true,
+    "creator_watermark_name": "CHIMERAVFX"
+  },
+  "publishing": {
+    "provider": "zernio",
+    "status": "failed",
+    "mode": "publish_now",
+    "scheduled_for": null,
+    "timezone": "UTC",
+    "idempotency_key": "clipforge-auto-automatic-1787692652625-32902815946",
+    "updated_at_epoch": 1787695983,
+    "media": {
+      "filename": "final.mp4",
+      "size_bytes": 25038251,
+      "public_url_present": true
+    },
+    "metadata": {
+      "title": "Morty's Place-Saving Device Has a Horrifying Secret",
+      "caption": "Morty's Place-Saving Device Has a Horrifying Secret",
+      "hashtags": [
+        "#rickandmorty",
+        "#vatofacid",
+        "#morty",
+        "#rick",
+        "#animerecap",
+        "#scifi"
+      ],
+      "tags": [
+        "rick and morty",
+        "vat of acid episode",
+        "morty place saving device",
+        "rick and morty reaction",
+        "rick and morty highlights",
+        "rick and morty recap",
+        "the prestige morty",
+        "rick and morty clips",
+        "rick and morty best moments",
+        "scifi comedy",
+        "adult swim",
+        "rick tricking morty"
+      ],
+      "metadata_source": {
+        "title": "production.json.title",
+        "caption": "production.json.title",
+        "hashtags": "production.json.hashtags",
+        "tags": "production.json.youtube_tags"
+      }
+    },
+    "posts": [
+      {
+        "post_id": "",
+        "status": "failed",
+        "error": "One or more accounts do not belong to this user",
+        "error_details": {},
+        "platform": "tiktok",
+        "request_id": "clipforge-auto-automatic-1787692652625-32902815946-tiktok"
+      },
+      {
+        "post_id": "",
+        "status": "failed",
+        "error": "One or more accounts do not belong to this user",
+        "error_details": {},
+        "platform": "youtube",
+        "request_id": "clipforge-auto-automatic-1787692652625-32902815946-youtube"
+      }
+    ],
+    "metadata_source": "jobs/automatic-1787692652625/production.json"
+  }
+}

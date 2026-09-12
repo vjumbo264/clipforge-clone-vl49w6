@@ -1,0 +1,32 @@
+{
+  "initiative": "fix-planner-cutting-scenes-short",
+  "current_step": "complete",
+  "conflict_identified": {
+    "word_budget_location": "NARRATION DURATION CONTRACT block (~line 1170) and CONSTRAINTS voiceover_text bullet (~line 1224), both stating (end_seconds - start_seconds) * (188 / 60) as a hard requirement",
+    "picking_end_seconds_location": "STEP 3 'PICKING end_seconds - read this before writing any cut' block (~line 759)",
+    "actual_conflict_or_ambiguity_found": "The word-budget formula was stated twice as a 'hard delivery requirement' with no explicit causal direction between end_seconds and word count. A planning AI reading linearly could satisfy the budget mechanically by choosing a SHORTER end_seconds (smaller budget, easier to hit), directly undermining the PICKING end_seconds rules. The formula's forceful framing ('REQUIRED', 'hard delivery requirement', 'never return fewer than 90%') out-weighted the earlier, longer prose rules. Additionally, 'Target the sum of (end - start) across all cuts at roughly {target_duration} seconds' named no mechanism for hitting the total, leaving per-cut truncation available as the easiest lever."
+  },
+  "fix": {
+    "status": "complete",
+    "before_excerpt": "NARRATION DURATION CONTRACT — REQUIRED FOR EVERY CUT\n  Edge TTS is currently configured for about 188 words per minute (3.133\n  spoken words per second). Before returning JSON, calculate EACH cut's\n  voiceover word budget as `(end_seconds - start_seconds) * (188 / 60)`.\n  Write enough final spoken words to cover that full budget. A cut MUST NOT\n  fall below 90% of this budget (2.82 words per second), so narration covers\n  at least 90% of the planned cut duration at the real TTS pace. This is a\n  hard delivery requirement, not a suggestion: do not return a sparse summary\n  for a long cut. For e",
+    "after_excerpt": "NARRATION DURATION CONTRACT — REQUIRED FOR EVERY CUT\n  ORDER OF OPERATIONS — read this first, it overrides any other reading:\n  `end_seconds` is ALWAYS chosen FIRST, using ONLY the visual-payoff rules\n  in the \"PICKING end_seconds\" block in STEP 3 — i.e. where the narrated\n  moment actually concludes on screen (a real shot boundary, visible\n  payoff, or resolution). It is NEVER chosen based on how much narration\n  would \"fit\" at the target pace, and NEVER shortened to make the word\n  budget below easier to hit. The word budget is a CONSEQUENCE of the\n  duration you already committed to for visual reasons — never an input\n  to choosing that duration. If a scene's true visual length results in\n  more or fewer words than the rough word-budget formula suggests, the\n  WORD COUNT flexes — the scene's length never does.\n\n  With that order fixed: Edge TTS is currently configured for about 188\n  words per minute (3.133 spoken words per second). AFTER `end_seconds`\n  is decided, and before returning JSON, calculate EACH cut's voiceover\n  word budget as `(end_seconds - start_seconds) * (188 / 60)`.\n  Write enough final spoken words to cover that full budget. A cut MUST NOT\n  fall below 90% of this budget (2.82 words per second), so narration covers\n  at least 90% of the planned cut duration at the real TTS pace. This is a\n  hard delivery requirement on the WRITING, not a suggestion: do no",
+    "other_duration_pressure_found_and_fixed": [
+      "STEP 3 total-duration line: added explicit rule that the ~target_duration total is hit ONLY by choosing WHICH moments to include/exclude as whole cuts, never by truncating an included cut's visual length.",
+      "CONSTRAINTS voiceover_text bullet: added explicit directionality statement directly after the formula (formula sizes WRITING, never duration; word count flexes, scene length never does).",
+      "Reviewed FOCUS_DIRECTIVE point 8 and NO_FOCUS_DIRECTIVE duration lines: both already subordinate the duration target to the story thread and concern whole-moment selection - consistent with the fix, left unchanged.",
+      "Stage B render.py untouched per operator instruction; narration style/tone instructions untouched."
+    ],
+    "commits": []
+  },
+  "tests_updated": true,
+  "full_suite_passing": true,
+  "human_review_items": [
+    "Confirm production behavior on the next real Stage A run: cuts should reach full visual payoff with Stage B setpts retiming now near-natural pace.",
+    "Pre-existing failures unrelated to this change (verified on clean HEAD before my edits): 6x test_stage_b.py ReframeDetectionTierTests (opencv/yolo environment deps), test_status.py terminal-state test, and 6 others — 359 passed / 13 failed both before and after."
+  ],
+  "resume_from": {
+    "file": "",
+    "component": "",
+    "next_operation": "initiative complete — no resume needed"
+  }
+}

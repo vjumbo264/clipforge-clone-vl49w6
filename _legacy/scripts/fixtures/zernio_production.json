@@ -1,0 +1,14 @@
+{
+  "title": "Morty Enters the Fear Hole Alone and It Knows Why",
+  "hashtags": ["#RickAndMorty", "#FearHole", "#SciFi"],
+  "youtube_tags": ["Rick and Morty", "Fear Hole", "science fiction"],
+  "video_duration_seconds": 120,
+  "target_total_duration_seconds": 60,
+  "cuts": [
+    {
+      "start_seconds": 0,
+      "end_seconds": 60,
+      "voiceover_text": "A concise example narration."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "clipforge-bot-a",
+  "main": "src/index.js",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": true,
+  "vars": {
+    "ORIGINAL_CLIPFORGE_REPOSITORY": "motionssalt/clipforge",
+    "INTERNAL_RELAY_GROUP_CHAT_ID": "-5405387856",
+    "BOT_B_TELEGRAM_USERNAME": "Clipforgedl_bot",
+    // Job TTL for NEWLY created jobs (the bot writes every job's initial
+    // jobs/<id>/status.json, including expires_at_epoch). This MIRRORS the
+    // single canonical repo Actions variable CLIPFORGE_TTL_SECONDS
+    // (currently 172800 = 48h), which stage-a.yml and cleanup.yml consume.
+    // MUST AGREE with those two workflow files and with pipeline/status.py's
+    // DEFAULT_TTL_SECONDS comment — drift between this creation-time TTL and
+    // the cleanup sweep TTL is exactly the disconnect behind the operator's
+    // "48h not taking effect" report (TTL_FIX_PROGRESS.json, fix #1). If the
+    // repo variable changes, update this var to match and redeploy.
+    "CLIPFORGE_JOB_TTL_SECONDS": "172800"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CLIPFORGE_BOT_KV",
+      "id": "b09957b233c247deb40cc703ffadc95d"
+    }
+  ],
+  // kv-minimization migration (phase 0): D1 takes over task labels/options,
+  // Shadow Clone job resume state (bug-51), and announcement markers from KV.
+  // KV remains only for credentials + relay handoff + relay dedup. Bot B
+  // deliberately does NOT get this binding (it never reads task/clone data).
+  "d1_databases": [
+    {
+      "binding": "CLIPFORGE_BOT_D1",
+      "database_name": "clipforge-bot-state",
+      "database_id": "720de60e-1a08-492a-9ce6-64cb9534098d",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // bug-51: the cron trigger drives the Shadow Clone job sweep
+  // (scheduled() in src/index.js) — the webhook stages long-running clone
+  // creations in the D1 clone_jobs table and this once-a-minute tick resumes/finalizes/fails them,
+  // guaranteeing every attempt ends in a user-visible success or error
+  // message instead of the killed-request silence at "Preparing repository…".
+  "triggers": {
+    "crons": ["* * * * *"]
+  }
+  // bug-62: no trailing comma above — nothing follows this object before the
+  // closing brace, and while JSONC/JSON5 tolerate trailing commas, the
+  // scripts/reclaim-stale-task-labels.mjs parser stripping comments to
+  // whitespace and then calling strict JSON.parse does not. The parser has
+  // also been hardened, but keeping the source clean prevents a re-trip.
+  // Secret bindings (set via `wrangler secret put`, never committed):
+  //   TELEGRAM_BOT_TOKEN        — Bot A's Telegram bot token
+  //   KV_ENCRYPTION_KEY         — base64 32-byte AES-256-GCM key for credential envelopes
+  //   TELEGRAM_WEBHOOK_SECRET   — X-Telegram-Bot-Api-Secret-Token value (§13 invariant #3)
+  //   RELAY_ENCRYPTION_KEY      — relay sealed-envelope key (§9.2; used when the relay phase lands)
+}

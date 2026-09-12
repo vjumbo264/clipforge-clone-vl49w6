@@ -1,0 +1,74 @@
+{
+  "version": 2,
+  "provider": "gemini-developer-api",
+  "model": "gemini-3.6-flash",
+  "model_route": "fallback",
+  "tool_turns": 16,
+  "opened_composites": 11,
+  "opened_composite_evidence": [
+    {
+      "filename": "event_000368076.jpg",
+      "coverage_start_seconds": 366.076,
+      "coverage_end_seconds": 370.076
+    },
+    {
+      "filename": "event_000426593.jpg",
+      "coverage_start_seconds": 424.593,
+      "coverage_end_seconds": 428.593
+    },
+    {
+      "filename": "event_000467172.jpg",
+      "coverage_start_seconds": 465.172,
+      "coverage_end_seconds": 469.172
+    },
+    {
+      "filename": "event_000483274.jpg",
+      "coverage_start_seconds": 481.274,
+      "coverage_end_seconds": 485.274
+    },
+    {
+      "filename": "event_000958437.jpg",
+      "coverage_start_seconds": 956.437,
+      "coverage_end_seconds": 960.437
+    },
+    {
+      "filename": "event_000965673.jpg",
+      "coverage_start_seconds": 963.673,
+      "coverage_end_seconds": 967.673
+    },
+    {
+      "filename": "event_001010840.jpg",
+      "coverage_start_seconds": 1008.84,
+      "coverage_end_seconds": 1012.84
+    },
+    {
+      "filename": "event_001095930.jpg",
+      "coverage_start_seconds": 1093.93,
+      "coverage_end_seconds": 1097.93
+    },
+    {
+      "filename": "event_001122580.jpg",
+      "coverage_start_seconds": 1120.58,
+      "coverage_end_seconds": 1124.58
+    },
+    {
+      "filename": "event_001158120.jpg",
+      "coverage_start_seconds": 1156.12,
+      "coverage_end_seconds": 1160.12
+    },
+    {
+      "filename": "event_001235570.jpg",
+      "coverage_start_seconds": 1233.57,
+      "coverage_end_seconds": 1237.57
+    }
+  ],
+  "validation_corrections": 1,
+  "key_rotations": 4,
+  "gemini_usage": {
+    "prompt_token_count": 1126740,
+    "candidates_token_count": 2479,
+    "total_token_count": 1142313,
+    "thoughts_token_count": 13094,
+    "cached_content_token_count": 853951
+  }
+}

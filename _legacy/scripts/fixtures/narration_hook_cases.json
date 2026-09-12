@@ -1,0 +1,88 @@
+{
+  "cases": [
+    {
+      "story_type": "action_high_stakes",
+      "hook_mechanism": "stakes",
+      "source_facts": [
+        "A driver takes a passenger across an old bridge.",
+        "The bridge begins collapsing while the car is still on it.",
+        "They escape onto a maintenance platform."
+      ],
+      "before_opening": "He drives onto an old bridge with a passenger.",
+      "after_opening": "The bridge starts collapsing before he can turn around.",
+      "required_source_terms": ["bridge", "collapsing"]
+    },
+    {
+      "story_type": "comedy",
+      "hook_mechanism": "irony",
+      "source_facts": [
+        "A man tries to clear leaves from a garden party.",
+        "He picks up a leaf blower.",
+        "The blower sends the party decorations into the pool."
+      ],
+      "before_opening": "A man uses a leaf blower at a garden party.",
+      "after_opening": "The party was fine until he picked up the leaf blower.",
+      "required_source_terms": ["party", "leaf blower"]
+    },
+    {
+      "story_type": "shocking_reveal",
+      "hook_mechanism": "mystery",
+      "source_facts": [
+        "A woman finds a locked suitcase in her hallway.",
+        "A child opens it with a key hidden in a book.",
+        "Inside is the family photo album that was believed lost."
+      ],
+      "before_opening": "A woman finds a locked suitcase in her hallway.",
+      "after_opening": "That locked suitcase was hiding something the family thought was gone.",
+      "required_source_terms": ["suitcase", "family", "gone"]
+    },
+    {
+      "story_type": "emotional_reunion",
+      "hook_mechanism": "emotional_tension",
+      "source_facts": [
+        "A boy searches the neighborhood for his lost dog.",
+        "The dog hears the boy calling from across a street.",
+        "The dog runs back to him."
+      ],
+      "before_opening": "A boy looks for his lost dog around the neighborhood.",
+      "after_opening": "The dog heard his voice before the boy saw her.",
+      "required_source_terms": ["dog", "voice", "boy"]
+    },
+    {
+      "story_type": "confrontation",
+      "hook_mechanism": "consequence",
+      "source_facts": [
+        "A teenager walks into a garage to confront another boy.",
+        "The other boy is waiting beside a damaged motorcycle.",
+        "The motorcycle owner arrives and interrupts them."
+      ],
+      "before_opening": "He walks into the garage to confront the other boy.",
+      "after_opening": "He picked the worst possible time to start this confrontation.",
+      "required_source_terms": ["confrontation"]
+    },
+    {
+      "story_type": "mystery",
+      "hook_mechanism": "curiosity",
+      "source_facts": [
+        "A night guard finds fresh footprints through an empty museum.",
+        "The footprints stop at a locked gallery door.",
+        "A cat is discovered inside the gallery."
+      ],
+      "before_opening": "A night guard finds footprints in an empty museum.",
+      "after_opening": "Someone had been walking through an empty museum. Or so it looked.",
+      "required_source_terms": ["walking", "museum"]
+    },
+    {
+      "story_type": "character_mistake_reversal",
+      "hook_mechanism": "contradiction",
+      "source_facts": [
+        "A mechanic presses a button to open a workshop door.",
+        "The button locks the door instead.",
+        "A delivery truck is now waiting outside."
+      ],
+      "before_opening": "A mechanic tries to open the workshop door with a button.",
+      "after_opening": "That button was meant to open the door. It did the opposite.",
+      "required_source_terms": ["button", "door"]
+    }
+  ]
+}

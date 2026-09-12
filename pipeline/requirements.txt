@@ -1,0 +1,32 @@
+# ClipForge pipeline dependencies (GitHub Actions runners).
+# Only what the new pipeline/ tree needs; _legacy/scripts/requirements.txt
+# remains frozen with the legacy tree.
+
+# --- Transcription (Stage B captions word timing; Stage A transcript) --------
+faster-whisper==1.0.3
+onnxruntime>=1.17,<2
+
+# --- Imaging (captions raster compositor, watermark) --------------------------
+Pillow>=10.3,<12
+
+# --- Local face detection (optional cinematic reframe focus; CPU-only) --------
+# If model initialization fails at runtime, Stage B keeps the safe centered
+# crop rather than failing the render.
+opencv-python-headless>=4.8,<5
+insightface==0.7.3
+
+# --- Animal-subject detection for the cinematic reframe (bug-40; optional) ---
+# YOLOv8n COCO animal classes (bird/cat/dog/horse/sheep/cow/elephant/bear/
+# zebra/giraffe). Loaded lazily and ONLY as a fallback when neither the CNN
+# face detector nor the anime/cat cascades found a subject; any import/model
+# failure is swallowed and the render keeps the safe centered crop.
+ultralytics>=8.2,<9
+
+# --- Numerics ------------------------------------------------------------------
+numpy>=1.24,<3
+
+# --- Voiceover TTS (Microsoft Edge online service; no API key) -----------------
+edge-tts==7.2.8
+
+# --- Automatic Mode analysis (Gemini Developer API; GEMINI_API_KEYS secret) ---
+google-genai>=1.66,<2

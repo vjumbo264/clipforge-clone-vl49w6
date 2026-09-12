@@ -1,0 +1,116 @@
+name: Telegram private relay
+
+run-name: Telegram relay — ${{ github.event.inputs.job_id || 'unknown' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "ClipForge job identifier"
+        required: true
+        type: string
+      relay_payload:
+        description: "Authenticated ciphertext produced by Bot B; never log or edit this value."
+        required: true
+        type: string
+      relay_file_id:
+        description: "Bot B-visible copied media identifier; never log or edit this value."
+        required: true
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: clipforge-telegram-relay-${{ github.event.inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout trusted relay code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install relay dependencies only
+        run: python -m pip install --disable-pip-version-check -r scripts/telegram_relay_requirements.txt
+
+      - name: Verify relay disk headroom
+        shell: bash
+        run: |
+          set -euo pipefail
+          available="$(df -Pm "$GITHUB_WORKSPACE" | awk 'NR==2 {print $4}')"
+          if [[ -z "$available" || "$available" -lt 4096 ]]; then
+            echo "Central relay runner has insufficient free disk space." >&2
+            exit 1
+          fi
+          echo "Central relay free space: ${available} MiB"
+
+      - name: Start local Telegram Bot API for large relay media
+        shell: bash
+        env:
+          BOTB_MTPROTO_API_ID: ${{ secrets.BOTB_MTPROTO_API_ID }}
+          BOTB_MTPROTO_API_HASH: ${{ secrets.BOTB_MTPROTO_API_HASH }}
+          BOTB_MTPROTO_BOT_TOKEN: ${{ secrets.BOTB_MTPROTO_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$BOTB_MTPROTO_API_ID"
+          test -n "$BOTB_MTPROTO_API_HASH"
+          test -n "$BOTB_MTPROTO_BOT_TOKEN"
+          mkdir -p "${RUNNER_TEMP}/clipforge-telegram-bot-api"
+          docker run --detach --name clipforge-local-bot-api --publish 127.0.0.1:8081:8081 \
+            --volume "${RUNNER_TEMP}/clipforge-telegram-bot-api:/var/lib/telegram-bot-api" \
+            --env TELEGRAM_API_ID="$BOTB_MTPROTO_API_ID" \
+            --env TELEGRAM_API_HASH="$BOTB_MTPROTO_API_HASH" \
+            --env TELEGRAM_LOCAL=1 \
+            aiogram/telegram-bot-api:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error "http://127.0.0.1:8081/bot${BOTB_MTPROTO_BOT_TOKEN}/getMe" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs clipforge-local-bot-api >&2 || true
+          exit 1
+
+      - name: Download privately and hand off to target Stage A
+        shell: bash
+        env:
+          RELAY_ENCRYPTION_KEY: ${{ secrets.RELAY_ENCRYPTION_KEY }}
+          BOTB_MTPROTO_API_ID: ${{ secrets.BOTB_MTPROTO_API_ID }}
+          BOTB_MTPROTO_API_HASH: ${{ secrets.BOTB_MTPROTO_API_HASH }}
+          BOTB_MTPROTO_BOT_TOKEN: ${{ secrets.BOTB_MTPROTO_BOT_TOKEN }}
+          CLIPFORGE_TELEGRAM_API_ID: ${{ secrets.CLIPFORGE_TELEGRAM_API_ID }}
+          CLIPFORGE_TELEGRAM_API_HASH: ${{ secrets.CLIPFORGE_TELEGRAM_API_HASH }}
+          CLIPFORGE_TELEGRAM_SESSION: ${{ secrets.CLIPFORGE_TELEGRAM_SESSION }}
+          RELAY_PAYLOAD: ${{ github.event.inputs.relay_payload }}
+          RELAY_FILE_ID: ${{ github.event.inputs.relay_file_id }}
+          LOCAL_BOT_API_BASE: http://127.0.0.1:8081
+          LOCAL_BOT_API_FILES_DIR: ${{ runner.temp }}/clipforge-telegram-bot-api
+          LOCAL_BOT_API_CONTAINER: clipforge-local-bot-api
+          RELAY_CENTRAL_REPOSITORY: ${{ github.repository }}
+          RELAY_CENTRAL_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -n "$RELAY_ENCRYPTION_KEY"
+          test -n "$BOTB_MTPROTO_API_ID"
+          test -n "$BOTB_MTPROTO_API_HASH"
+          test -n "$BOTB_MTPROTO_BOT_TOKEN"
+          test -n "$CLIPFORGE_TELEGRAM_API_ID"
+          test -n "$CLIPFORGE_TELEGRAM_API_HASH"
+          test -n "$CLIPFORGE_TELEGRAM_SESSION"
+          python scripts/telegram_relay.py --job-id '${{ github.event.inputs.job_id }}' --relay-payload "$RELAY_PAYLOAD" --relay-file-id "$RELAY_FILE_ID"
+
+      - name: Remove local temporary relay files
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          docker rm --force clipforge-local-bot-api >/dev/null 2>&1 || true
+          sudo rm -rf work/telegram-relay "${RUNNER_TEMP}/clipforge-telegram-bot-api"

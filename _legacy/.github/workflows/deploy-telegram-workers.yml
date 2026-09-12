@@ -1,0 +1,60 @@
+name: Deploy Telegram Workers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'telegram-bot/**'
+      - '.github/workflows/deploy-telegram-workers.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-telegram-workers
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: telegram-bot
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: telegram-bot/pnpm-lock.yaml
+
+      - name: Install Worker dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run Worker tests
+        run: node --test test/**/*.test.js
+
+      - name: Deploy Bot A Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: telegram-bot
+          command: deploy --config wrangler.jsonc
+
+      - name: Deploy Bot B relay Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: telegram-bot
+          command: deploy --config wrangler.bot-b.jsonc

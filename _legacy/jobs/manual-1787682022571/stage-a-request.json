@@ -1,0 +1,22 @@
+{
+  "automatic_mode": "false",
+  "focus": "",
+  "job_id": "manual-1787682022571",
+  "language": "auto",
+  "relay_expected_size": "1737170735",
+  "relay_release_tag": "clipforge-relay-input-manual-1787682022571",
+  "relay_sha256": "433bb9cc153cce8535874d00ef36ebee6ee984ab61c20e103e79b6971c789cfa",
+  "saved_at_epoch": 1787688294,
+  "series_context": "",
+  "series_id": "manual-1787682022571",
+  "series_mode": "true",
+  "series_part": "1",
+  "series_source_job_id": "manual-1787682022571",
+  "series_start_seconds": "0",
+  "source_type": "telegram_bot_forward",
+  "target_duration_seconds": "180",
+  "torrent_file_index": "",
+  "version": 2,
+  "video_url": "relay:private",
+  "whisper_model": "base"
+}
