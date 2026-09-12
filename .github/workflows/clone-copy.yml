@@ -1,0 +1,223 @@
+name: Shadow Clone — one-time file copy
+
+# bug-63: created by the ClipForge bot's Shadow Clone onboarding and
+# DISPATCHED ONCE with the source revision + bootstrap commit as inputs. It
+# performs the bulk source-file copy that previously ran inside the
+# Cloudflare Worker and was killed mid-loop by the Worker's execution-time
+# limit (leaving clones with only .clipforge-sync.json). Self-deletes on
+# success; permanent failures (missing inputs, non-fast-forward, empty tree)
+# trap the workflow so it can never silently fire again on a later push.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Source commit SHA to copy from (must be an ancestor of motionssalt/clipforge main)"
+        required: true
+        type: string
+      bootstrap_commit:
+        description: "Bootstrap commit SHA the final tree is built on top of"
+        required: true
+        type: string
+      expected_files:
+        description: "Number of cloneable files the bot enumerated at dispatch time"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: clipforge-clone-copy
+  cancel-in-progress: false
+
+jobs:
+  copy:
+    name: Copy source files
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${{ inputs.source_sha }}" | grep -qE '^[0-9a-f]{40}$'
+          printf '%s' "${{ inputs.bootstrap_commit }}" | grep -qE '^[0-9a-f]{40}$'
+          printf '%s' "${{ inputs.expected_files }}" | grep -qE '^[0-9]+$'
+
+      - name: Check out the clone repository
+        uses: actions/checkout@v4
+        with:
+          ref: "${{ github.ref_name }}"
+          fetch-depth: 0
+
+      - name: Record start status
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name  "clipforge-bot"
+          git config user.email "clipforge-bot@users.noreply.github.com"
+          TOTAL=$(printf '%s' "${{ inputs.expected_files }}")
+          printf '{"version":1,"state":"copying","done":0,"total":%s,"updated_at":"%s"}\n' "$TOTAL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .clipforge-clone-status.json
+          git add .clipforge-clone-status.json
+          git commit -m "clipforge: clone copy started" -q
+          git push -q origin "HEAD:${{ github.ref_name }}"
+
+      - name: Fetch the source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/clipforge-src
+          git clone --filter=blob:none --no-checkout --depth 50 https://github.com/motionssalt/clipforge.git /tmp/clipforge-src
+          cd /tmp/clipforge-src
+          git cat-file -e "${{ inputs.source_sha }}^{commit}" || { echo "source_sha not reachable from motionssalt/clipforge main"; exit 1; }
+          git checkout -q "${{ inputs.source_sha }}"
+
+      - name: Copy cloneable files and report progress
+        id: copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          copy_one() {
+            local p="$1"
+            if git -C /tmp/clipforge-src cat-file -e "${{ inputs.source_sha }}:$p" 2>/dev/null; then
+              mkdir -p "$(dirname "$p")"
+              git -C /tmp/clipforge-src show "${{ inputs.source_sha }}:$p" > "$p"
+            fi
+          }
+          git -C /tmp/clipforge-src ls-tree -r --name-only "${{ inputs.source_sha }}"             | grep -Ev '^(branding/|jobs/|audio-library/)'             | grep -Eiv 'keys|accounts|queue'             > /tmp/clipforge-all.txt
+          # Workflow files are NOT copied into the working tree: a push from
+          # this run must not touch .github/workflows/* (GITHUB_TOKEN pushes
+          # carrying workflow changes are remote-rejected — verified live,
+          # bug-63; Contents-API PUTs for them are 403-forbidden too). The
+          # source's own workflow files are written afterwards by the BOT via
+          # the Contents API using the user's PAT, whose workflow scope the
+          # onboarding prompt already requires — the same authority the
+          # original in-Worker copy relied on. The workflow list is still
+          # written so the bot-side follow-up can enumerate exactly which
+          # source paths exist.
+          grep -v '^.github/workflows/' /tmp/clipforge-all.txt > /tmp/clipforge-files.txt
+          grep '^.github/workflows/' /tmp/clipforge-all.txt > /tmp/clipforge-workflows.txt || true
+          # Mode manifest for the exec-bit restore below (the source ships one
+          # 100755 script; exec bits must survive the copy — the old in-Worker
+          # copy carried file.mode through for this reason).
+          git -C /tmp/clipforge-src ls-tree -r "${{ inputs.source_sha }}"             | awk -F'	' '{
+                p = $2;
+                # Portable string ops only — mawk (Ubuntu default) mis-parses
+                # escaped slashes inside awk regex constants (verified live).
+                if (substr(p,1,9) == "branding/" || substr(p,1,5) == "jobs/" || substr(p,1,14) == "audio-library/") next;
+                tl = tolower(p);
+                if (index(tl,"keys") || index(tl,"accounts") || index(tl,"queue")) next;
+                split($1, m, " ");
+                print m[1] " " p;
+              }' > /tmp/clipforge-modes.txt
+          TOTAL=$(wc -l < /tmp/clipforge-all.txt | tr -d ' ')
+          PUSHABLE=$(wc -l < /tmp/clipforge-files.txt | tr -d ' ')
+          if [ "$TOTAL" -eq 0 ]; then echo "no cloneable files found"; exit 1; fi
+          if [ "$TOTAL" -ne "${{ inputs.expected_files }}" ]; then
+            echo "warning: enumerated $TOTAL files, bot expected ${{ inputs.expected_files }}"
+          fi
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          CHUNK=25
+          COUNT=0
+          NEXT=$CHUNK
+          # Live-verified (bug-63): the file list MUST be redirected into the
+          # loop — GitHub Actions run-steps have no interactive stdin, so a
+          # bare read loop exits after zero iterations and reports success
+          # with 0 files copied.
+          while IFS= read -r p; do
+            copy_one "$p"
+            COUNT=$((COUNT + 1))
+            if [ "$COUNT" -ge "$NEXT" ] || [ "$COUNT" -eq "$PUSHABLE" ]; then
+              printf '{"version":1,"state":"copying","done":%s,"total":%s,"updated_at":"%s"}\n' "$COUNT" "$PUSHABLE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .clipforge-clone-status.json
+              git add .clipforge-clone-status.json
+              git commit -q -m "clipforge: clone copy progress $COUNT/$PUSHABLE"
+              git push -q origin "HEAD:${{ github.ref_name }}"
+              NEXT=$((COUNT + CHUNK))
+            fi
+          done < /tmp/clipforge-files.txt
+          if [ "$COUNT" -ne "$PUSHABLE" ]; then echo "copied $COUNT of $PUSHABLE files"; exit 1; fi
+          # Restore exec bits: git-show-redirect materializes every file as
+          # 644 regardless of the source mode, and git add records what it
+          # sees. chmod from the modes manifest (path = text after first
+          # space, so space-containing paths survive).
+          awk '$1 == "100755" { print substr($0, index($0, " ") + 1) }' /tmp/clipforge-modes.txt | while IFS= read -r p; do
+            if [ -f "$p" ]; then chmod +x "$p"; fi
+          done
+          echo "copied=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the full tree
+        # Live-verified (bug-63): ONE fast-forward git push carries the whole
+        # copied tree EXCEPT .github/workflows/* (the copy step deliberately
+        # leaves those out of the working tree). This is allowed because the
+        # commit chain touches no workflow path, and it needs ZERO REST
+        # mutations — the earlier designs of ~330 paced REST blob writes and
+        # of GITHUB_TOKEN Contents-API workflow PUTs both hit 403s live
+        # (secondary rate limit on the former, the workflow-file restriction
+        # on the latter). The push is built on top of the bootstrap commit,
+        # so .clipforge-sync.json is preserved (the old in-Worker copy's
+        # base_tree behaviour) and exec bits restored by the copy step's
+        # chmod survive (git add records what it sees).
+        shell: bash
+        env:
+          COPIED: ${{ steps.copy.outputs.copied }}
+          TOTAL: ${{ steps.copy.outputs.total }}
+        run: |
+          set -euo pipefail
+          git config user.name  "clipforge-bot"
+          git config user.email "clipforge-bot@users.noreply.github.com"
+          printf '{"version":1,"state":"finalizing","done":%s,"total":%s,"updated_at":"%s"}\n' "$COPIED" "$TOTAL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .clipforge-clone-status.json
+          git add -A
+          git commit -q -m "clipforge: copy files from motionssalt/clipforge@${{ inputs.source_sha }} ($COPIED files)"
+          # Fast-forward only: refuse to clobber a branch that moved.
+          git push -q origin "HEAD:${{ github.ref_name }}"
+          # Server-side post-condition: the pushed head must descend from the
+          # bootstrap commit and its tree must hold at least TOTAL minus the
+          # source-workflow count blobs (those arrive via the bot's PAT after
+          # the run reports 'complete').
+          git fetch -q origin "${{ github.ref_name }}"
+          git merge-base --is-ancestor "${{ inputs.bootstrap_commit }}" "origin/${{ github.ref_name }}" || { echo "bootstrap commit is not an ancestor of the pushed head"; exit 1; }
+          WFCOUNT=$(wc -l < /tmp/clipforge-workflows.txt | tr -d ' ')
+          FLOOR=$((TOTAL - WFCOUNT))
+          BLOBS=$(git ls-tree -r "origin/${{ github.ref_name }}" | grep -c ' blob ')
+          if [ "$BLOBS" -lt "$FLOOR" ]; then echo "published tree holds $BLOBS blobs, expected at least $FLOOR"; exit 1; fi
+          echo "published tree verified: $BLOBS blobs (source workflows pending via the bot)"
+
+      - name: Record completion
+        shell: bash
+        env:
+          TOTAL: ${{ steps.copy.outputs.total }}
+          COPIED: ${{ steps.copy.outputs.copied }}
+        run: |
+          set -euo pipefail
+          git config user.name  "clipforge-bot"
+          git config user.email "clipforge-bot@users.noreply.github.com"
+          # The publish step's push advanced the ref; resync before the final
+          # status commit. The one-time workflow file itself is NOT deleted
+          # here — a GITHUB_TOKEN push may not touch .github/workflows/* even
+          # to delete (verified live, bug-63). The bot removes it via the
+          # Contents API with the user's PAT right after this status lands.
+          git fetch -q origin "${{ github.ref_name }}"
+          git reset -q --hard "origin/${{ github.ref_name }}"
+          printf '{"version":1,"state":"complete","done":%s,"total":%s,"updated_at":"%s"}\n' "$COPIED" "$TOTAL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .clipforge-clone-status.json
+          git add .clipforge-clone-status.json
+          git commit -q -m "clipforge: clone copy complete"
+          git push -q origin "HEAD:${{ github.ref_name }}"
+
+      - name: Record failure
+        if: failure()
+        shell: bash
+        env:
+          TOTAL: ${{ steps.copy.outputs.total }}
+        run: |
+          set +e
+          git config user.name  "clipforge-bot"
+          git config user.email "clipforge-bot@users.noreply.github.com"
+          git fetch -q origin "${{ github.ref_name }}"
+          git reset -q --hard "origin/${{ github.ref_name }}"
+          printf '{"version":1,"state":"failed","done":0,"total":%s,"error":"copy workflow step failed — see the Actions run log","updated_at":"%s"}\n' "${TOTAL:-0}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .clipforge-clone-status.json
+          git add .clipforge-clone-status.json
+          git commit -q -m "clipforge: clone copy failed" || true
+          git push -q origin "HEAD:${{ github.ref_name }}" || true
+          exit 1
+
